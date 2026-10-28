@@ -1,0 +1,82 @@
+﻿"use client";
+import Avatar from "@mui/material/Avatar";
+import { TrendUp, UserPlus, PencilSimple, CheckCircle, CurrencyDollar } from "@phosphor-icons/react";
+import { OWNER_AVATARS } from "@/lib/avatars";
+
+type FeedItem = {
+  id: number;
+  Icon: React.ElementType;
+  iconColor: string;
+  iconColorDark: string;
+  iconBg: string;
+  title: string;
+  user: string;
+  initials: string;
+  avatarBg: string;
+  ownerKey: string;
+  time: string;
+};
+
+const feed: FeedItem[] = [
+  { id:1, Icon:TrendUp,       iconColor:"#F59E0B", iconColorDark:"#FBBF24", iconBg:"#FEF5E7", title:"Matrix Corp moved to Negotiation",   user:"PM SDL",  initials:"PM", avatarBg:"#F59E0B", ownerKey:"PM SDL",  time:"5m ago"  },
+  { id:2, Icon:UserPlus,      iconColor:"#F59E0B", iconColorDark:"#FBBF24", iconBg:"#FEF5E7", title:"New lead added: James Wilson",        user:"Sarah K", initials:"SK", avatarBg:"#F7B13C", ownerKey:"Sarah K", time:"23m ago" },
+  { id:3, Icon:PencilSimple,  iconColor:"#F59E0B", iconColorDark:"#FBBF24", iconBg:"#FEF5E7", title:"Sweany Inc contact updated",          user:"PM SDL",  initials:"PM", avatarBg:"#F59E0B", ownerKey:"PM SDL",  time:"1h ago"  },
+  { id:4, Icon:CheckCircle,   iconColor:"#F59E0B", iconColorDark:"#FCD34D", iconBg:"#FEF5E7", title:"Task: Follow up with Apex done",      user:"John D",  initials:"JD", avatarBg:"#6B6B6B", ownerKey:"John D",  time:"2h ago"  },
+  { id:5, Icon:CurrencyDollar,iconColor:"#F59E0B", iconColorDark:"#FCD34D", iconBg:"#FEF5E7", title:"New deal created: Pixel Studios",     user:"Ria M",   initials:"RM", avatarBg:"#111111", ownerKey:"Ria M",   time:"3h ago"  },
+];
+
+export default function ActivityFeed({ isDark = false }: { isDark?: boolean }) {
+  return (
+    <div className="rounded-xl sm:rounded-2xl p-4 sm:p-6 border h-full flex flex-col backdrop-blur-xl transition-colors duration-300"
+      style={{
+        backgroundColor: isDark ? "var(--bg-card)" : "#ffffff",
+        borderColor: isDark ? "var(--serviceops-soft)" : "var(--serviceops-soft)",
+        boxShadow: isDark ? "0 8px 32px rgba(0, 0, 0, 0.24)" : "0 8px 32px rgba(17,17,17,0.08)",
+      }}>
+      <div className="mb-4 sm:mb-5">
+        <h3 className={`m-0 text-sm sm:text-[14px] font-bold ${isDark ? "text-[#FFF3D6]" : "text-[#111111]"}`}>Recent Activity</h3>
+        <p className={`text-[11px] sm:text-[12px] mt-0.5 ${isDark ? "text-[#D0A966]" : "text-[#6B6B6B]"}`}>Live team updates</p>
+      </div>
+
+      <div className="flex-1 space-y-3 sm:space-y-4">
+        {feed.map((item, idx) => {
+          const { Icon } = item;
+          return (
+            <div key={item.id} className="flex items-start gap-3 group">
+              <div className="relative flex flex-col items-center flex-shrink-0">
+                <div className="w-7 h-7 rounded-[9px] flex items-center justify-center" style={{ backgroundColor: isDark ? "#2D180D" : item.iconBg }}>
+                  <Icon size={14} color={isDark ? item.iconColorDark : item.iconColor} weight="duotone" />
+                </div>
+                {idx < feed.length - 1 && (
+                  <div className={`w-px flex-1 mt-1 mb-0 h-[14px] ${isDark ? "bg-[#4B2F1C]" : "bg-[#E5E5E5]"}`} />
+                )}
+              </div>
+
+              <div className="flex-1 min-w-0 pb-1">
+                <p className={`text-xs sm:text-[14px] font-medium leading-snug transition-colors ${isDark ? "text-[#F7E2B2] group-hover:text-[#FFF3D6]" : "text-[#3D3D3D] group-hover:text-[#111111]"}`}>
+                  {item.title}
+                </p>
+                <div className="flex items-center gap-1 sm:gap-1.5 mt-1 flex-wrap">
+                  <Avatar
+                    src={OWNER_AVATARS[item.ownerKey]}
+                    sx={{ width:12, height:12, bgcolor:item.avatarBg, fontSize:"0.42rem", fontWeight:700 }}
+                  >
+                    {item.initials}
+                  </Avatar>
+                  <span className={`text-[10px] sm:text-[12px] font-medium ${isDark ? "text-[#D0A966]" : "text-[#6B6B6B]"}`}>{item.user}</span>
+                  <span className={`text-[10px] sm:text-[12px] ${isDark ? "text-[#8C6A3F]" : "text-[#D0A966]"}`}>·</span>
+                  <span className={`text-[10px] sm:text-[12px] ${isDark ? "text-[#D0A966]" : "text-[#6B6B6B]"}`}>{item.time}</span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <button className={`mt-3 sm:mt-4 w-full text-center text-[10px] sm:text-[11.5px] font-bold py-2 rounded-lg sm:rounded-xl transition-all duration-150 ${isDark ? "text-[#FBBF24] hover:text-[#FFF3D6] hover:bg-[#2D180D]" : "text-[#111111] hover:text-[#111111] hover:bg-[#F7F7F7]"}`}>
+        View all activity →
+      </button>
+    </div>
+  );
+}
+
