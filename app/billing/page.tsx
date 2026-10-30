@@ -16,7 +16,7 @@ import { matchesQuery } from "@/lib/filtering";
 import { ALL_JOBS, generateInvoice, getWorkspace, type JobRecord } from "@/lib/jobsData";
 import {
   allInvoices, outstanding, recordPayment, billingStateForJob, jobCharges, workOrderForJob, ESTIMATES, estimateTotal,
-  workOrderById, setEstimateStatus, customerHref, fmtDate, fmtDay, money, JOBS_TODAY_TS, DAY_MS,
+  workOrderById, setEstimateStatus, customerHref, customerByName, fmtDate, fmtDay, money, JOBS_TODAY_TS, DAY_MS,
   type Invoice, type BillingState, type InvoiceStatus,
 } from "@/lib/serviceData";
 
@@ -47,6 +47,15 @@ export default function BillingPage() {
   const overdue = invoices.filter(i => i.status === "Overdue");
   const pendingEst = ESTIMATES.filter(e => e.status === "Sent");
 
+  const sendPayLink = async (i: Invoice) => {
+    const email = customerByName(i.customer)?.email ?? "";
+    const res = await fetch("/api/public-links", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "invoice", ref: i.number, customer: i.customer, title: `Invoice ${i.number}`, email, taxPct: 0, lines: [], amount: outstanding(i) }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { notify("Could not create the payment link", undefined, "info"); return; }
+    if (data.emailed) { notify(`Payment link emailed to ${email}`); return; }
+    navigator.clipboard?.writeText(data.url).catch(() => {});
+    notify("Link created and copied. Email is not configured here, so share it by hand.", undefined, "info");
+  };
   const invoiceJob = (j: JobRecord) => {
     const inv = generateInvoice(j.id);
     refresh(); notify(`${inv.number} raised for ${j.customer}`, `/jobs/${j.id}`);
@@ -100,8 +109,8 @@ export default function BillingPage() {
       cell: i => (
         <ActionMenu label={`Actions for ${i.number}`} actions={[
           ...(i.jobId ? [{ label: "Open job", icon: Wrench, onClick: () => router.push(`/jobs/${i.jobId}`) }] : []),
-          { label: "Record payment", icon: Money, disabled: i.status === "Paid" || !!i.jobId, onClick: () => { recordPayment(i); refresh(); notify(`Payment recorded on ${i.number}`); } },
-          { label: "Send reminder", icon: PaperPlaneTilt, disabled: i.status === "Paid", onClick: () => notify(`Reminder sent to ${i.customer}`, undefined, "info") },
+          { label: "Record payment", icon: Money, disabled: i.status === "Paid", onClick: () => { recordPayment(i); refresh(); notify(`Payment recorded on ${i.number}`); } },
+          { label: "Send payment link", icon: PaperPlaneTilt, disabled: i.status === "Paid", onClick: () => sendPayLink(i) },
         ]} />
       ),
     },

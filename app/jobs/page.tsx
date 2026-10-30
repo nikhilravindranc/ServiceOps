@@ -1,4 +1,5 @@
 "use client";
+import { useOpenOnNew } from "@/lib/useOpenOnNew";
 import { ReactNode, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -20,7 +21,7 @@ import {
   CheckCircle, Fan, GearSix, Drop, Lightning, Wrench, Elevator, ArrowDown, ArrowUp,
   UserSwitch, PencilSimple,
 } from "@phosphor-icons/react";
-import FiltersDrawer, { type FilterRow } from "@/components/leads/FiltersDrawer";
+import FiltersDrawer, { type FilterRow } from "@/components/shared/FiltersDrawer";
 import NewJobDrawer from "@/components/jobs/NewJobDrawer";
 import { useTheme } from "@/components/ThemeContext";
 import { CARD_SHADOW, IconTile, type Tone } from "@/components/dashboard/DashboardSection";
@@ -150,6 +151,7 @@ export default function JobsPage() {
   const [rowMenu, setRowMenu]       = useState<{ anchor: HTMLElement; id: number } | null>(null);
   const [bulkAnchor, setBulkAnchor] = useState<HTMLElement | null>(null);
   const [newJobOpen, setNewJobOpen] = useState(false);
+  useOpenOnNew(() => setNewJobOpen(true));
   const [createdJob, setCreatedJob] = useState<JobRecord | null>(null);
   const [allJobs, setAllJobs]       = useState<JobRecord[]>(ALL_JOBS);
 
@@ -242,7 +244,7 @@ export default function JobsPage() {
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
           <div className="min-w-0">
             <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-body text-[var(--text-body)]">
-              <Link href="/" className="hover:text-[var(--serviceops-primary)] transition-colors">Home</Link>
+              <Link href="/" className="hover:text-[var(--text-primary)] hover:underline underline-offset-2 transition-colors">Home</Link>
               <CaretRight size={12} className="text-[var(--text-muted)]" />
               <span className="text-[var(--text-primary)]">Jobs</span>
             </nav>
@@ -333,7 +335,7 @@ export default function JobsPage() {
                   <th className={`${headCell} bg-[var(--serviceops-tint)]`}>Customer</th>
                   <th className={`${headCell} bg-[var(--serviceops-tint)]`}>Service type</th>
                   <th className={`${headCell} bg-[var(--serviceops-tint)]`} aria-sort={sortAsc ? "ascending" : "descending"}>
-                    <button type="button" onClick={() => setSortAsc(s => !s)} className="inline-flex items-center gap-1.5 hover:text-[var(--serviceops-primary)] transition-colors">
+                    <button type="button" onClick={() => setSortAsc(s => !s)} className="inline-flex items-center gap-1.5 hover:text-[var(--text-primary)] hover:underline underline-offset-2 transition-colors">
                       Scheduled date <SortIcon size={14} weight="bold" />
                     </button>
                   </th>

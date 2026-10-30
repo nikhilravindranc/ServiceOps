@@ -25,18 +25,6 @@ export type Tone = keyof typeof TONES;
 /** Card surface shared by every dashboard card (hero KPIs included). */
 export const CARD_SHADOW = "0 1px 2px rgba(17, 17, 17, 0.04), 0 8px 24px rgba(17, 17, 17, 0.05)";
 
-/** Amber "View all ›" link used in card headers. */
-export function ViewAllLink({ href, label = "View all" }: { href: string; label?: string }) {
-  return (
-    <Link
-      href={href}
-      className="inline-flex items-center gap-1 text-button-sm text-[var(--serviceops-primary)] hover:text-[var(--serviceops-hover)] transition-colors whitespace-nowrap"
-    >
-      {label}
-      <CaretRight size={12} weight="bold" />
-    </Link>
-  );
-}
 
 /** Bare "›" link for cards whose whole header navigates somewhere. */
 export function ChevronLink({ href, label }: { href: string; label: string }) {

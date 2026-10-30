@@ -1,7 +1,9 @@
-﻿"use client";
+"use client";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
-import { ThemeProvider as CRMThemeProvider, useTheme } from "./ThemeContext";
+import { ThemeProvider as AppThemeProvider, useTheme } from "./ThemeContext";
 import { SidebarProvider } from "./SidebarContext";
+import { useBrand } from "./BrandContext";
+import { textOn, type BrandColors } from "@/lib/brandTheme";
 
 const HEADING = "var(--font-heading), sans-serif";
 const BODY    = "var(--font-body), system-ui, -apple-system, sans-serif";
@@ -39,8 +41,11 @@ function hexToRgba(hex: string, alpha: number) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-function buildTheme(isDark: boolean) {
-  const C = isDark ? SERVICEOPS_PALETTE.dark : SERVICEOPS_PALETTE.light;
+function buildTheme(isDark: boolean, brand: BrandColors | null = null) {
+  const base: { depth: string; primary: string; action: string; hover: string; soft: string; tint: string; surface: string } = isDark ? SERVICEOPS_PALETTE.dark : SERVICEOPS_PALETTE.light;
+  // A company colour theme recolours light mode only; dark mode keeps its own palette.
+  const C = !isDark && brand ? { ...base, ...brand } : base;
+  const onAction = !isDark && brand ? textOn(brand.action) : C.depth;
   const bg = C.surface;
   const bgHead = C.tint;
   const border = isDark ? "#4B2F1C" : C.soft;
@@ -105,7 +110,7 @@ function buildTheme(isDark: boolean) {
           },
           containedPrimary: {
             backgroundColor: C.action,
-            color: C.depth,
+            color: onAction,
             boxShadow: "none",
             "&:hover": { backgroundColor: C.hover, boxShadow: `0 4px 12px 0 ${hexToRgba(C.primary, 0.25)}` },
             "&:active": { backgroundColor: C.depth, transform: "scale(0.98)", color: isDark ? "#18110B" : "#fff" },
@@ -352,17 +357,18 @@ function buildTheme(isDark: boolean) {
 
 function MUIThemeWrapper({ children }: { children: React.ReactNode }) {
   const { theme } = useTheme();
-  const muiTheme = buildTheme(theme === "dark");
+  const { colors } = useBrand();
+  const muiTheme = buildTheme(theme === "dark", colors);
   return <ThemeProvider theme={muiTheme}>{children}</ThemeProvider>;
 }
 
 export default function ThemeRegistry({ children }: { children: React.ReactNode }) {
   return (
-    <CRMThemeProvider>
+    <AppThemeProvider>
       <SidebarProvider>
         <MUIThemeWrapper>{children}</MUIThemeWrapper>
       </SidebarProvider>
-    </CRMThemeProvider>
+    </AppThemeProvider>
   );
 }
 

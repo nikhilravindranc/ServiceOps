@@ -18,13 +18,17 @@ const ThemeContext = createContext<{
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [theme, setTheme] = useState<Theme>("light");
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    const saved = localStorage.getItem("crm-theme") as Theme | null;
+    const saved = localStorage.getItem("serviceops-theme") as Theme | null;
     if (saved) setTheme(saved);
+    setLoaded(true);
   }, []);
 
   useEffect(() => {
+    // Wait until the saved choice has been read, or the default would overwrite it.
+    if (!loaded) return;
     const root = document.documentElement;
     const forceLight = FORCE_LIGHT_ROUTES.includes(pathname);
     if (theme === "dark" && !forceLight) {
@@ -32,8 +36,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     } else {
       root.classList.remove("dark");
     }
-    localStorage.setItem("crm-theme", theme);
-  }, [theme, pathname]);
+    localStorage.setItem("serviceops-theme", theme);
+  }, [theme, pathname, loaded]);
 
   const toggle = () => setTheme(t => t === "light" ? "dark" : "light");
 

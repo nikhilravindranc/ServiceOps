@@ -6,3 +6,7 @@ node_modules/
 *.log
 COLOR_IMPLEMENTATION_STATUS.md
 .vercel
+.next-dev/
+*.tsbuildinfo
+*.db
+*.db-journal

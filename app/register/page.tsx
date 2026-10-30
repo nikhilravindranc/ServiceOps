@@ -1,35 +1,9 @@
 "use client";
 import { useState } from "react";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { signIn } from "next-auth/react";
 import { Eye, EyeSlash, ArrowRight, CheckCircle } from "@phosphor-icons/react";
-
-const STATES = [
-  "Andhra Pradesh","Arunachal Pradesh","Assam","Bihar","Chhattisgarh","Goa","Gujarat",
-  "Haryana","Himachal Pradesh","Jharkhand","Karnataka","Kerala","Madhya Pradesh",
-  "Maharashtra","Manipur","Meghalaya","Mizoram","Nagaland","Odisha","Punjab",
-  "Rajasthan","Sikkim","Tamil Nadu","Telangana","Tripura","Uttar Pradesh",
-  "Uttarakhand","West Bengal","Delhi","Jammu & Kashmir","Ladakh",
-];
-
-const DISTRICTS: Record<string, string[]> = {
-  "Maharashtra": ["Mumbai","Pune","Nagpur","Nashik","Aurangabad","Solapur","Kolhapur"],
-  "Karnataka":   ["Bengaluru","Mysuru","Mangaluru","Hubballi","Belagavi","Tumakuru"],
-  "Tamil Nadu":  ["Chennai","Coimbatore","Madurai","Tiruchirappalli","Salem","Tirunelveli"],
-  "Delhi":       ["Central Delhi","East Delhi","New Delhi","North Delhi","South Delhi","West Delhi"],
-  "Gujarat":     ["Ahmedabad","Surat","Vadodara","Rajkot","Bhavnagar","Jamnagar"],
-  "Telangana":   ["Hyderabad","Warangal","Nizamabad","Karimnagar","Khammam"],
-};
-
-const USER_TYPES = ["Sales Executive","Sales Manager","Operations Manager","VP of Operations","Administrator","Super Admin"];
-
-const ZIP_CODES: Record<string, string[]> = {
-  "Mumbai":    ["400001","400002","400003","400004","400005"],
-  "Pune":      ["411001","411002","411003","411004","411005"],
-  "Bengaluru": ["560001","560002","560003","560004","560005"],
-  "Chennai":   ["600001","600002","600003","600004","600005"],
-  "Hyderabad": ["500001","500002","500003","500004","500005"],
-  "Ahmedabad": ["380001","380002","380003","380004","380005"],
-};
 
 type Field = { value: string; focus: boolean };
 const field = (): Field => ({ value: "", focus: false });
@@ -37,36 +11,34 @@ const field = (): Field => ({ value: "", focus: false });
 export default function RegisterPage() {
   const router = useRouter();
 
-  const [fullName,    setFullName]    = useState(field());
-  const [email,       setEmail]       = useState(field());
-  const [mobile,      setMobile]      = useState(field());
-  const [address,     setAddress]     = useState(field());
-  const [password,    setPassword]    = useState(field());
-  const [confirm,     setConfirm]     = useState(field());
-  const [state,       setState]       = useState("");
-  const [district,    setDistrict]    = useState("");
-  const [zip,         setZip]         = useState("");
-  const [userType,    setUserType]    = useState("");
-  const [showPass,    setShowPass]    = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
-  const [error,       setError]       = useState("");
-  const [loading,     setLoading]     = useState(false);
-  const [success,     setSuccess]     = useState(false);
-
-  const districts = state ? (DISTRICTS[state] ?? ["Other"]) : [];
-  const zips      = district ? (ZIP_CODES[district] ?? ["Other"]) : [];
+  const [fullName,  setFullName]  = useState(field());
+  const [email,     setEmail]     = useState(field());
+  const [password,  setPassword]  = useState(field());
+  const [agree,     setAgree]     = useState(false);
+  const [showPass,  setShowPass]  = useState(false);
+  const [error,     setError]     = useState("");
+  const [loading,   setLoading]   = useState(false);
+  const [success,   setSuccess]   = useState(false);
+  const [verifyLink, setVerifyLink] = useState<string | undefined>();
+  const [providers, setProviders] = useState<Record<string, unknown>>({});
+  useEffect(() => { fetch("/api/auth/providers").then(r => r.json()).then(setProviders).catch(() => {}); }, []);
+  const social = (id: "google" | "microsoft-entra-id") => {
+    if (!providers[id]) { setError("This sign-up method is not set up on this server yet. Use email."); return; }
+    signIn(id, { callbackUrl: "/" });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    if (password.value !== confirm.value) { setError("Passwords do not match."); return; }
-    if (password.value.length < 6)        { setError("Password must be at least 6 characters."); return; }
+    if (password.value.length < 8) { setError("Password must be at least 8 characters."); return; }
+    if (!agree)                    { setError("Please accept the Terms and Privacy Policy to continue."); return; }
     setLoading(true);
-    await new Promise(r => setTimeout(r, 800));
+    const res = await fetch("/api/account/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: fullName.value, email: email.value, password: password.value }) });
+    const data = await res.json().catch(() => ({}));
     setLoading(false);
+    if (!res.ok) { setError(data.error ?? "Could not create the account. Try again."); return; }
+    setVerifyLink(data.devLink);
     setSuccess(true);
-    await new Promise(r => setTimeout(r, 1500));
-    router.push("/login");
   };
 
   // Floating label helpers
@@ -89,22 +61,16 @@ export default function RegisterPage() {
     boxShadow: f.focus ? "0 0 0 3px rgba(245,158,11,0.15)" : "none",
     transition: "all 0.18s ease",
   });
-  const selectStyle = (val: string): React.CSSProperties => ({
-    width: "100%", padding: "10px 14px", borderRadius: 12,
-    fontSize: 13.5, fontWeight: 500, color: val ? "#1F1F1F" : "#8A8A8A",
-    background: "#F7F7F7",
-    border: "1.5px solid #E5E5E5",
-    outline: "none", appearance: "none", cursor: "pointer",
-    transition: "all 0.18s ease",
-  });
 
   if (success) return (
     <div className="min-h-screen flex items-center justify-center"
       style={{ background: "linear-gradient(135deg, #FFFDF7 0%, #FFF7E6 50%, #FEF3C7 100%)" }}>
       <div className="flex flex-col items-center gap-3 bg-white rounded-3xl px-10 py-8 shadow-xl border border-[#EEEEEE]">
         <CheckCircle size={48} color="#10B981" weight="fill" />
-        <p className="text-[17px] font-bold text-[#1F1F1F]">Account created!</p>
-        <p className="text-[13px] text-[#8A8A8A] font-medium">Redirecting to sign in…</p>
+        <p className="text-[17px] font-bold text-[#1F1F1F]">Check your email</p>
+        <p className="text-[13px] text-[#8A8A8A] font-medium text-center max-w-[300px]">We sent a link to {email.value} to confirm your address. Then you can sign in.</p>
+        {verifyLink && (<a href={verifyLink} className="text-[12.5px] font-bold text-[#B45309] underline text-center max-w-[300px]">Email is not configured on this server. Open the verification link here.</a>)}
+        <button onClick={() => router.push("/login")} className="text-[13px] font-bold text-[#B45309]">Go to sign in</button>
       </div>
     </div>
   );
@@ -130,153 +96,99 @@ export default function RegisterPage() {
         {/* Accent bar */}
         <div className="h-1 w-full" style={{ background: "linear-gradient(90deg, #D97706 0%, #F59E0B 50%, #FBBF24 100%)" }} />
 
-        <div className="px-8 pt-6 pb-5">
+        <div className="px-10 pt-7 pb-6">
           {/* Logo */}
-          <div className="flex justify-center mb-4">
-            <img src="/logo.png" alt="EVOQ CRM" style={{ height: "26px", width: "auto" }} />
+          <div className="flex justify-center mb-5">
+            <img src="/logo.png" alt="ServiceOps" style={{ height: "28px", width: "auto" }} />
           </div>
 
           {/* Heading */}
-          <div className="mb-4">
-            <h1 className="m-0 text-[20px] font-extrabold text-[#111111] tracking-tight">Get started your journey</h1>
-            <p className="text-[#8A8A8A] text-[12px] mt-0.5 font-medium">Create your EVOQ CRM account</p>
+          <div className="mb-5">
+            <h1 className="m-0 text-[22px] font-extrabold text-[#111111] tracking-tight leading-tight">Create your account</h1>
+            <p className="text-[#8A8A8A] text-[13px] mt-0.5 font-medium">Schedule, dispatch and invoice field work in one place</p>
           </div>
 
           {/* Error */}
           {error && (
-            <div className="mb-3 px-3 py-2.5 rounded-xl text-[12.5px] font-medium text-red-700 flex items-center gap-2"
+            <div className="mb-4 px-3 py-2.5 rounded-xl text-[12.5px] font-medium text-red-700 flex items-center gap-2"
               style={{ background: "#FEF2F2", border: "1px solid #FECACA" }}>
               {error}
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-2.5">
-            {/* Row: Full Name + Email */}
-            <div className="grid grid-cols-2 gap-2.5">
-              <div className="relative">
-                <label style={labelStyle(fullName)}>Full Name</label>
-                <input required value={fullName.value} style={inputStyle(fullName)}
-                  onChange={e => setFullName(p => ({ ...p, value: e.target.value }))}
-                  onFocus={() => setFullName(p => ({ ...p, focus: true }))}
-                  onBlur={() => setFullName(p => ({ ...p, focus: false }))} />
-              </div>
-              <div className="relative">
-                <label style={labelStyle(email)}>Email</label>
-                <input required type="email" value={email.value} style={inputStyle(email)}
-                  onChange={e => setEmail(p => ({ ...p, value: e.target.value }))}
-                  onFocus={() => setEmail(p => ({ ...p, focus: true }))}
-                  onBlur={() => setEmail(p => ({ ...p, focus: false }))} />
-              </div>
-            </div>
+          {/* Social sign-up */}
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <button type="button" onClick={() => social("google")}
+              className="flex items-center justify-center gap-2.5 py-2.5 rounded-xl text-[13px] font-bold transition-all"
+              style={{ color: "#374151", background: "white", border: "1.5px solid #E5E5E5" }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = "#FCD34D"; e.currentTarget.style.background = "#FFFCF5"; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = "#E5E5E5"; e.currentTarget.style.background = "white"; }}>
+              <svg width="16" height="16" viewBox="0 0 24 24">
+                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+              </svg>
+              Google
+            </button>
+            <button type="button" onClick={() => social("microsoft-entra-id")}
+              className="flex items-center justify-center gap-2.5 py-2.5 rounded-xl text-[13px] font-bold transition-all"
+              style={{ color: "#374151", background: "white", border: "1.5px solid #E5E5E5" }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = "#FCD34D"; e.currentTarget.style.background = "#FFFCF5"; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = "#E5E5E5"; e.currentTarget.style.background = "white"; }}>
+              <svg width="16" height="16" viewBox="0 0 24 24">
+                <path d="M11.4 2H2v9.4h9.4V2z" fill="#F25022"/>
+                <path d="M22 2h-9.4v9.4H22V2z" fill="#7FBA00"/>
+                <path d="M11.4 12.6H2V22h9.4v-9.4z" fill="#00A4EF"/>
+                <path d="M22 12.6h-9.4V22H22v-9.4z" fill="#FFB900"/>
+              </svg>
+              Microsoft
+            </button>
+          </div>
 
-            {/* Row: Mobile + User Type */}
-            <div className="grid grid-cols-2 gap-2.5">
-              <div className="relative">
-                <label style={labelStyle(mobile)}>Mobile Number</label>
-                <input required type="tel" value={mobile.value} style={inputStyle(mobile)}
-                  onChange={e => setMobile(p => ({ ...p, value: e.target.value }))}
-                  onFocus={() => setMobile(p => ({ ...p, focus: true }))}
-                  onBlur={() => setMobile(p => ({ ...p, focus: false }))} />
-              </div>
-              <div className="relative">
-                <select required value={userType} onChange={e => setUserType(e.target.value)}
-                  style={selectStyle(userType)}
-                  onFocus={e => { e.currentTarget.style.borderColor = "#F59E0B"; e.currentTarget.style.boxShadow = "0 0 0 3px rgba(245,158,11,0.15)"; }}
-                  onBlur={e  => { e.currentTarget.style.borderColor = "#E5E5E5"; e.currentTarget.style.boxShadow = "none"; }}>
-                  <option value="" disabled>User Type</option>
-                  {USER_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-[#8A8A8A]">
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                </div>
-              </div>
-            </div>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="flex-1 h-px" style={{ background: "#EEEEEE" }} />
+            <span className="text-[12px] font-semibold text-[#8A8A8A] uppercase tracking-wider whitespace-nowrap">Or with email</span>
+            <div className="flex-1 h-px" style={{ background: "#EEEEEE" }} />
+          </div>
 
-            {/* Address */}
+          <form onSubmit={handleSubmit} className="space-y-3">
             <div className="relative">
-              <label style={{
-                ...labelStyle(address),
-                top: active(address) ? 6 : 14,
-                transform: active(address) ? "translateY(0) scale(0.78)" : "none",
-              }}>Address</label>
-              <textarea required value={address.value} rows={2}
-                onChange={e => setAddress(p => ({ ...p, value: e.target.value }))}
-                onFocus={() => setAddress(p => ({ ...p, focus: true }))}
-                onBlur={() => setAddress(p => ({ ...p, focus: false }))}
-                style={{ ...inputStyle(address), paddingTop: 22, resize: "none", lineHeight: 1.5 }} />
+              <label style={labelStyle(fullName)}>Full name</label>
+              <input required autoComplete="name" value={fullName.value} style={inputStyle(fullName)}
+                onChange={e => setFullName(p => ({ ...p, value: e.target.value }))}
+                onFocus={() => setFullName(p => ({ ...p, focus: true }))}
+                onBlur={() => setFullName(p => ({ ...p, focus: false }))} />
             </div>
 
-            {/* Row: Password + Confirm Password */}
-            <div className="grid grid-cols-2 gap-2.5">
-              <div className="relative">
-                <label style={labelStyle(password)}>Password</label>
-                <input required type={showPass ? "text" : "password"} value={password.value}
-                  style={{ ...inputStyle(password), paddingRight: 36 }}
-                  onChange={e => setPassword(p => ({ ...p, value: e.target.value }))}
-                  onFocus={() => setPassword(p => ({ ...p, focus: true }))}
-                  onBlur={() => setPassword(p => ({ ...p, focus: false }))} />
-                <button type="button" onClick={() => setShowPass(p => !p)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8A8A8A] hover:text-[#3D3D3D] transition-colors">
-                  {showPass ? <EyeSlash size={15} weight="duotone" /> : <Eye size={15} weight="duotone" />}
-                </button>
-              </div>
-              <div className="relative">
-                <label style={labelStyle(confirm)}>Confirm Password</label>
-                <input required type={showConfirm ? "text" : "password"} value={confirm.value}
-                  style={{ ...inputStyle(confirm), paddingRight: 36 }}
-                  onChange={e => setConfirm(p => ({ ...p, value: e.target.value }))}
-                  onFocus={() => setConfirm(p => ({ ...p, focus: true }))}
-                  onBlur={() => setConfirm(p => ({ ...p, focus: false }))} />
-                <button type="button" onClick={() => setShowConfirm(p => !p)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8A8A8A] hover:text-[#3D3D3D] transition-colors">
-                  {showConfirm ? <EyeSlash size={15} weight="duotone" /> : <Eye size={15} weight="duotone" />}
-                </button>
-              </div>
+            <div className="relative">
+              <label style={labelStyle(email)}>Work email</label>
+              <input required type="email" autoComplete="email" value={email.value} style={inputStyle(email)}
+                onChange={e => setEmail(p => ({ ...p, value: e.target.value }))}
+                onFocus={() => setEmail(p => ({ ...p, focus: true }))}
+                onBlur={() => setEmail(p => ({ ...p, focus: false }))} />
             </div>
 
-            {/* Row: State + District + Zip */}
-            <div className="grid grid-cols-3 gap-2.5">
-              <div className="relative">
-                <select required value={state} onChange={e => { setState(e.target.value); setDistrict(""); setZip(""); }}
-                  style={selectStyle(state)}
-                  onFocus={e => { e.currentTarget.style.borderColor = "#F59E0B"; e.currentTarget.style.boxShadow = "0 0 0 3px rgba(245,158,11,0.15)"; }}
-                  onBlur={e  => { e.currentTarget.style.borderColor = "#E5E5E5"; e.currentTarget.style.boxShadow = "none"; }}>
-                  <option value="" disabled>State</option>
-                  {STATES.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-[#8A8A8A]">
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                </div>
-              </div>
-              <div className="relative">
-                <select required value={district} onChange={e => { setDistrict(e.target.value); setZip(""); }}
-                  disabled={!state}
-                  style={{ ...selectStyle(district), opacity: state ? 1 : 0.5 }}
-                  onFocus={e => { e.currentTarget.style.borderColor = "#F59E0B"; e.currentTarget.style.boxShadow = "0 0 0 3px rgba(245,158,11,0.15)"; }}
-                  onBlur={e  => { e.currentTarget.style.borderColor = "#E5E5E5"; e.currentTarget.style.boxShadow = "none"; }}>
-                  <option value="" disabled>District</option>
-                  {districts.map(d => <option key={d} value={d}>{d}</option>)}
-                </select>
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-[#8A8A8A]">
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                </div>
-              </div>
-              <div className="relative">
-                <select required value={zip} onChange={e => setZip(e.target.value)}
-                  disabled={!district}
-                  style={{ ...selectStyle(zip), opacity: district ? 1 : 0.5 }}
-                  onFocus={e => { e.currentTarget.style.borderColor = "#F59E0B"; e.currentTarget.style.boxShadow = "0 0 0 3px rgba(245,158,11,0.15)"; }}
-                  onBlur={e  => { e.currentTarget.style.borderColor = "#E5E5E5"; e.currentTarget.style.boxShadow = "none"; }}>
-                  <option value="" disabled>Zip Code</option>
-                  {zips.length > 0
-                    ? zips.map(z => <option key={z} value={z}>{z}</option>)
-                    : <option value="Other">Other</option>}
-                </select>
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-[#8A8A8A]">
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                </div>
-              </div>
+            <div className="relative">
+              <label style={labelStyle(password)}>Password (8+ characters)</label>
+              <input required type={showPass ? "text" : "password"} autoComplete="new-password" value={password.value}
+                style={{ ...inputStyle(password), paddingRight: 40 }}
+                onChange={e => setPassword(p => ({ ...p, value: e.target.value }))}
+                onFocus={() => setPassword(p => ({ ...p, focus: true }))}
+                onBlur={() => setPassword(p => ({ ...p, focus: false }))} />
+              <button type="button" onClick={() => setShowPass(p => !p)} aria-label={showPass ? "Hide password" : "Show password"}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8A8A8A] hover:text-[#3D3D3D] transition-colors">
+                {showPass ? <EyeSlash size={16} weight="duotone" /> : <Eye size={16} weight="duotone" />}
+              </button>
             </div>
+
+            <label className="flex items-start gap-2.5 cursor-pointer select-none pt-1">
+              <input type="checkbox" checked={agree} onChange={e => setAgree(e.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-[#F59E0B]" />
+              <span className="text-[12.5px] font-medium text-[#6B6B6B] leading-snug">
+                I agree to the <span className="text-[#B45309] hover:underline">Terms</span> and <span className="text-[#B45309] hover:underline">Privacy Policy</span>
+              </span>
+            </label>
 
             {/* Submit */}
             <button type="submit" disabled={loading}
@@ -296,13 +208,13 @@ export default function RegisterPage() {
                   Creating account…
                 </>
               ) : (
-                <>Submit <ArrowRight size={14} weight="bold" /></>
+                <>Create account <ArrowRight size={14} weight="bold" /></>
               )}
             </button>
           </form>
 
-          <p className="text-center text-[12.5px] text-[#6B6B6B] mt-3 font-medium">
-            You already have an account?{" "}
+          <p className="text-center text-[12.5px] text-[#6B6B6B] mt-4 font-medium">
+            Already have an account?{" "}
             <button onClick={() => router.push("/login")}
               className="font-bold transition-colors"
               style={{ color: "#B45309" }}
@@ -313,7 +225,7 @@ export default function RegisterPage() {
           </p>
         </div>
 
-        <div className="px-8 py-3 border-t text-center" style={{ borderColor: "#EEEEEE", background: "#FAFAFA" }}>
+        <div className="px-10 py-3 border-t text-center" style={{ borderColor: "#EEEEEE", background: "#FAFAFA" }}>
           <p className="text-[11px] text-[#8A8A8A] font-medium">
             © 2026 Social DNA Labs ·{" "}
             <span className="text-[#B45309] cursor-pointer hover:underline">Privacy</span> ·{" "}

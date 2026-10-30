@@ -10,21 +10,29 @@ import MenuItem from "@mui/material/MenuItem";
 import Divider from "@mui/material/Divider";
 import { ListIcon, Bell, UserCircleIcon, SignOutIcon, Sun, Moon } from "@phosphor-icons/react";
 import { HeaderSearch, MobileSearch } from "./GlobalSearch";
-import { OWNER_AVATARS } from "@/lib/avatars";
 import { useTheme } from "@/components/ThemeContext";
+import { signOut, useSession } from "next-auth/react";
+import CreateMenu from "./CreateMenu";
+import { useLayout } from "@/components/LayoutContext";
 
 const EXPANDED_W = "260px";
+const COMPACT_EXPANDED_W = "224px";
 const COLLAPSED_W = "68px";
 const MOBILE_BP = 1024;
 
 const PATH_TITLES: Record<string, string> = {
   "/":         "Dashboard",
+  "/requests":     "Requests",
   "/work-orders":  "Work Orders",
   "/dispatch":     "Dispatch",
   "/jobs":         "Jobs",
   "/customers":    "Customers",
   "/assets":       "Assets",
   "/inventory":    "Inventory",
+  "/catalog":      "Catalog",
+  "/plans":        "Service plans",
+  "/insights":     "Insights",
+  "/timesheets":   "Timesheets",
   "/billing":      "Billing",
   "/reports":      "Reports",
   "/users":        "Users",
@@ -40,6 +48,7 @@ function UserMenu({
   router: ReturnType<typeof useRouter>;
   isDark: boolean;
 }) {
+  const { data: session } = useSession();
   return (
     <Menu
       anchorEl={anchor}
@@ -64,8 +73,8 @@ function UserMenu({
     >
       {/* User info */}
       <div className="px-5 pt-4 pb-3">
-        <p className={`text-[15px] font-bold leading-tight ${isDark ? "text-[var(--serviceops-depth)]" : "text-[var(--serviceops-depth)]"}`}>PM SDL</p>
-        <p className={`text-[12px] mt-0.5 ${isDark ? "text-[var(--serviceops-muted)]" : "text-[var(--serviceops-muted)]"}`}>Super Admin</p>
+        <p className={`text-[15px] font-bold leading-tight ${isDark ? "text-[var(--serviceops-depth)]" : "text-[var(--serviceops-depth)]"}`}>{session?.user?.name ?? "Account"}</p>
+        <p className={`text-[12px] mt-0.5 ${isDark ? "text-[var(--serviceops-muted)]" : "text-[var(--serviceops-muted)]"}`}>{session?.user?.role ?? ""}</p>
       </div>
 
       <Divider sx={{ borderColor: isDark ? "var(--serviceops-soft)" : "var(--serviceops-soft)", mx: 0 }} />
@@ -76,7 +85,7 @@ function UserMenu({
           sx={{
             gap: 2, px: "14px", py: "10px", fontSize: "0.875rem", fontWeight: 500,
             color: isDark ? "var(--serviceops-depth)" : "var(--serviceops-depth)", borderRadius: "10px",
-            "&:hover": { bgcolor: isDark ? "var(--serviceops-tint)" : "var(--serviceops-tint)", color: isDark ? "var(--serviceops-primary)" : "var(--serviceops-primary)" },
+            "&:hover": { bgcolor: isDark ? "rgba(255,243,214,0.09)" : "rgba(17,17,17,0.06)", color: "var(--serviceops-depth)", "& svg": { color: isDark ? "var(--serviceops-primary)" : "#C2410C" } },
           }}
         >
           <UserCircleIcon size={18} weight="duotone" />
@@ -84,7 +93,7 @@ function UserMenu({
         </MenuItem>
 
         <MenuItem
-          onClick={() => router.push("/login")}
+          onClick={() => signOut({ callbackUrl: "/login" })}
           sx={{
             gap: 2, px: "14px", py: "10px", fontSize: "0.875rem", fontWeight: 500,
             color: isDark ? "#EF4444" : "#EF4444", borderRadius: "10px",
@@ -128,6 +137,11 @@ export default function AppHeader() {
   const router    = useRouter();
   const { theme, toggle: toggleTheme } = useTheme();
   const isDark = theme === "dark";
+  const { data: session } = useSession();
+  const initials = (session?.user?.name ?? "?").split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase();
+  const { layout } = useLayout();
+  const compact = layout === "compact";
+  const expandedW = compact ? COMPACT_EXPANDED_W : EXPANDED_W;
   const [collapsed, setCollapsed]         = useState(false);
   const [isMobile, setIsMobile]           = useState(false);
   const [avatarAnchor, setAvatarAnchor]   = useState<HTMLElement | null>(null);
@@ -143,7 +157,7 @@ export default function AppHeader() {
     setCollapsed(isCollapsed);
 
     const applyDesktopWidth = (c: boolean) =>
-      document.documentElement.style.setProperty("--sidebar-w", c ? COLLAPSED_W : EXPANDED_W);
+      document.documentElement.style.setProperty("--sidebar-w", c ? COLLAPSED_W : expandedW);
 
     const mq = window.matchMedia(`(max-width: ${MOBILE_BP - 1}px)`);
 
@@ -162,7 +176,7 @@ export default function AppHeader() {
     onMqChange();
     mq.addEventListener("change", onMqChange);
     return () => mq.removeEventListener("change", onMqChange);
-  }, []);
+  }, [expandedW]);
 
   const toggle = () => {
     if (isMobile) {
@@ -173,12 +187,12 @@ export default function AppHeader() {
       const next = !collapsed;
       setCollapsed(next);
       localStorage.setItem("sidebar-collapsed", String(next));
-      document.documentElement.style.setProperty("--sidebar-w", next ? COLLAPSED_W : EXPANDED_W);
+      document.documentElement.style.setProperty("--sidebar-w", next ? COLLAPSED_W : expandedW);
       window.dispatchEvent(new CustomEvent("sidebar-toggle", { detail: { collapsed: next } }));
     }
   };
 
-  const title = PATH_TITLES[pathname] ?? "";
+  const title = PATH_TITLES[pathname] ?? PATH_TITLES["/" + pathname.split("/")[1]] ?? (pathname === "/" ? "Overview" : "");
 
   /* ─── Mobile header ─── */
   if (isMobile) {
@@ -197,7 +211,7 @@ export default function AppHeader() {
         <button
           onClick={toggle}
           className={`flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-xl transition-all duration-150 ${
-            isDark ? "text-[var(--serviceops-secondary)] hover:text-[var(--serviceops-primary)] hover:bg-[var(--serviceops-tint)]" : "text-[var(--serviceops-depth)] hover:text-[var(--serviceops-primary)] hover:bg-[var(--serviceops-tint)]"
+            isDark ? "text-[var(--serviceops-secondary)] hover:text-[var(--serviceops-depth)] hover:bg-[rgba(255,243,214,0.09)]" : "text-[var(--serviceops-depth)] hover:text-[#000000] hover:bg-[rgba(17,17,17,0.06)]"
           }`}
           aria-label="Open menu"
         >
@@ -209,6 +223,7 @@ export default function AppHeader() {
         <MobileSearch isDark={isDark} />
 
         {/* Dark / Light toggle */}
+        <CreateMenu />
         <ThemeToggleButton isDark={isDark} onToggle={toggleTheme} />
 
         {/* Notifications */}
@@ -225,15 +240,47 @@ export default function AppHeader() {
         </Tooltip>
 
         <Avatar
-          src={OWNER_AVATARS["PM SDL"]}
           onClick={e => setAvatarAnchor(e.currentTarget)}
           sx={{
             width: 34, height: 34,
             bgcolor: "var(--serviceops-primary)", fontSize: "0.6rem", fontWeight: 800,
             cursor: "pointer", border: `2px solid ${isDark ? "var(--serviceops-soft)" : "var(--serviceops-soft)"}`,
           }}
-        >PM</Avatar>
+        >{initials}</Avatar>
 
+        <UserMenu anchor={avatarAnchor} onClose={() => setAvatarAnchor(null)} router={router} isDark={isDark} />
+      </header>
+    );
+  }
+
+  /* ─── Compact desktop header: title on the left, tools on the right; the logo is in the sidebar ─── */
+  if (compact) {
+    return (
+      <header
+        style={{
+          position: "fixed", top: 0, right: 0, left: "var(--sidebar-w)", height: "56px", zIndex: 60,
+          backgroundColor: isDark ? "var(--serviceops-surface)" : "#ffffff",
+          borderBottom: "1px solid var(--serviceops-soft)", display: "flex", alignItems: "center", gap: "16px", padding: "0 20px",
+          transition: "left 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s ease",
+        }}
+      >
+        <button onClick={toggle} title={collapsed ? "Expand sidebar" : "Collapse sidebar"} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-[var(--serviceops-depth)] hover:bg-[var(--serviceops-tint)]">
+          <ListIcon size={18} weight="bold" />
+        </button>
+        <h1 className="m-0 text-[16px] font-semibold text-[var(--text-primary)] whitespace-nowrap">{title}</h1>
+        <div className="flex-1" />
+        <HeaderSearch isDark={isDark} />
+        <CreateMenu />
+        <ThemeToggleButton isDark={isDark} onToggle={toggleTheme} />
+        <Tooltip title="3 unread notifications">
+          <IconButton size="small" sx={{ borderRadius: "8px" }}>
+            <Badge badgeContent={3} color="error" sx={{ "& .MuiBadge-badge": { fontSize: "0.58rem", height: 15, minWidth: 15, padding: "0 3px" } }}>
+              <Bell size={20} color={isDark ? "#9CA3AF" : "#6B6B6B"} weight="duotone" />
+            </Badge>
+          </IconButton>
+        </Tooltip>
+        <Avatar onClick={e => setAvatarAnchor(e.currentTarget)} sx={{ width: 32, height: 32, bgcolor: "var(--serviceops-primary)", fontSize: "0.6rem", fontWeight: 800, cursor: "pointer" }}>{initials}</Avatar>
         <UserMenu anchor={avatarAnchor} onClose={() => setAvatarAnchor(null)} router={router} isDark={isDark} />
       </header>
     );
@@ -262,7 +309,7 @@ export default function AppHeader() {
         <button
           onClick={toggle}
           className={`flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg transition-all duration-150 ${
-            isDark ? "text-[var(--serviceops-secondary)] hover:text-[var(--serviceops-primary)] hover:bg-[var(--serviceops-tint)]" : "text-[var(--serviceops-depth)] hover:text-[var(--serviceops-primary)] hover:bg-[var(--serviceops-tint)]"
+            isDark ? "text-[var(--serviceops-secondary)] hover:text-[var(--serviceops-depth)] hover:bg-[rgba(255,243,214,0.09)]" : "text-[var(--serviceops-depth)] hover:text-[#000000] hover:bg-[rgba(17,17,17,0.06)]"
           }`}
           title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
@@ -292,6 +339,7 @@ export default function AppHeader() {
         <HeaderSearch isDark={isDark} />
 
         {/* Dark / Light toggle */}
+        <CreateMenu />
         <ThemeToggleButton isDark={isDark} onToggle={toggleTheme} />
 
         {/* Notifications */}
@@ -309,11 +357,10 @@ export default function AppHeader() {
 
         {/* Avatar */}
         <Avatar
-          src={OWNER_AVATARS["PM SDL"]}
           onClick={e => setAvatarAnchor(e.currentTarget)}
           sx={{ width: 32, height: 32, bgcolor: "var(--serviceops-primary)", fontSize: "0.6rem", fontWeight: 800, cursor: "pointer" }}
           className={`ring-2 ring-transparent transition-all ${isDark ? "hover:ring-[var(--serviceops-soft)]" : "hover:ring-[var(--serviceops-soft)]"}`}
-        >PM</Avatar>
+        >{initials}</Avatar>
 
         <UserMenu anchor={avatarAnchor} onClose={() => setAvatarAnchor(null)} router={router} isDark={isDark} />
       </div>

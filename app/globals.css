@@ -224,20 +224,7 @@ html.dark .dark-text-body               { color: var(--text-body) !important; }
 html.dark .dark-text-muted              { color: var(--text-muted) !important; }
 
 /* ── Responsive: mobile sidebar overlay ──────── */
-@media (max-width: 1023px) {
-  aside.crm-sidebar {
-    transform: translateX(-100%);
-    width: 280px !important;
-    z-index: 70 !important;
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s ease !important;
-  }
-  aside.crm-sidebar[data-mobile-open="true"] {
-    transform: translateX(0) !important;
-  }
-  .sidebar-content {
-    margin-left: 0 !important;
-  }
-}
+
 
 /* ── Responsive page content padding ─────────── */
 @media (max-width: 640px) {
@@ -579,3 +566,21 @@ html.dark .MuiTextField-root .MuiInputBase-root               { background-color
 html.dark .MuiTextField-root .MuiOutlinedInput-notchedOutline { border-color: #27272A !important; }
 html.dark .MuiTextField-root input,
 html.dark .MuiTextField-root textarea                         { color: #D4D4D8 !important; }
+
+/* ── Compact layout ─────────────────────────────
+   Chosen in Settings, Appearance. Only spacing, borders and density change; colours stay as they are. */
+@media (min-width: 1024px) {
+  html[data-layout="compact"] .sidebar-content { padding-top: 56px; }
+  html[data-layout="compact"] aside[aria-label="Main navigation"] { background: var(--serviceops-tint) !important; }
+  html[data-layout="compact"] aside[aria-label="Main navigation"] a {
+    font-size: 14px !important; padding-top: 7px !important; padding-bottom: 7px !important; border-radius: 8px;
+  }
+  html[data-layout="compact"] main { padding: 16px 20px !important; }
+  html[data-layout="compact"] main.space-y-5 > :not([hidden]) ~ :not([hidden]) { margin-top: 16px; }
+  /* flat surfaces: hairlines instead of shadows, smaller corners */
+  html[data-layout="compact"] main [style*="box-shadow"] { box-shadow: none !important; }
+  html[data-layout="compact"] main .rounded-2xl { border-radius: 10px !important; }
+  /* denser tables with cell dividers */
+  html[data-layout="compact"] main td, html[data-layout="compact"] main th { padding-top: 8px !important; padding-bottom: 8px !important; }
+  html[data-layout="compact"] main td + td, html[data-layout="compact"] main th + th { border-left: 1px solid var(--border-soft); }
+}

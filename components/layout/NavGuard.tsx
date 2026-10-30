@@ -3,7 +3,7 @@ import { usePathname } from "next/navigation";
 import AppHeader from "./AppHeader";
 import Sidebar from "./Sidebar";
 
-const NO_NAV = ["/login", "/register", "/signup"];
+const NO_NAV = ["/login", "/register", "/signup", "/forgot-password", "/reset-password", "/verify-email", "/invite", "/onboarding", "/book", "/approve", "/pay", "/review", "/portal", "/dev-idp"];
 
 export default function NavGuard() {
   const pathname = usePathname();

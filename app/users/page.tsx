@@ -73,11 +73,15 @@ export default function UsersPage() {
     },
   ];
 
-  const sendInvite = () => {
+  const sendInvite = async () => {
     if (!form.name.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(form.email.trim())) { setErr("Enter a name and a valid work email"); return; }
+    const res = await fetch("/api/invites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: form.email.trim(), role: form.role }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { setErr(res.status === 403 ? "Only administrators can invite users" : data.error ?? "Could not send the invitation"); return; }
+    // The list below still shows the sample roster; the invitation itself is stored and emailed.
     USERS.push({ id: `u-${Date.now()}`, name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim() || "—", role: form.role, team: form.team, territory: form.territory, status: "Invited", lastActive: "—" });
     setInvite(false); setForm(blank); setErr(""); setVersion(v => v + 1);
-    notify(`Invite sent to ${form.email.trim()}`);
+    notify(data.devLink ? `Invite created for ${form.email.trim()}. Email is not configured here, so open the link.` : `Invite sent to ${form.email.trim()}`, data.devLink);
   };
   const MI = { fontSize: "0.84rem" };
   const tech = open?.role === "Technician" ? techProfile(open.name) : undefined;

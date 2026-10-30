@@ -1,10 +1,8 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Eye, EyeSlash, GoogleLogo, ArrowRight, LockSimple, EnvelopeSimple } from "@phosphor-icons/react";
-
-const VALID_EMAIL    = "tech@evoq.one";
-const VALID_PASSWORD = "Sdl@T3#1";
+import { signIn } from "next-auth/react";
+import { Eye, EyeSlash, ArrowRight, LockSimple, EnvelopeSimple } from "@phosphor-icons/react";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -12,29 +10,50 @@ export default function LoginPage() {
   const [email,       setEmail]       = useState("");
   const [password,    setPassword]    = useState("");
   const [showPass,    setShowPass]    = useState(false);
-  const [remember,    setRemember]    = useState(false);
   const [error,       setError]       = useState("");
   const [loading,     setLoading]     = useState(false);
   const [emailFocus,  setEmailFocus]  = useState(false);
   const [passFocus,   setPassFocus]   = useState(false);
+  const [otpMode,     setOtpMode]     = useState(false);
+  const [otpSent,     setOtpSent]     = useState(false);
+  const [code,        setCode]        = useState("");
+  const [notice,      setNotice]      = useState("");
+  const [providers,   setProviders]   = useState<Record<string, unknown>>({});
+
+  useEffect(() => { fetch("/api/auth/providers").then(r => r.json()).then(setProviders).catch(() => {}); }, []);
+
+  const finish = (res: { error?: string | null } | undefined, failure: string) => {
+    if (res?.error) { setError(failure); setLoading(false); return; }
+    // Full navigation so the middleware sees the new session cookie.
+    window.location.href = "/";
+  };
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
+    setError(""); setNotice("");
     setLoading(true);
-
-    await new Promise(r => setTimeout(r, 600));
-
-    if (email === VALID_EMAIL && password === VALID_PASSWORD) {
-      // Set cookie so middleware can protect routes server-side
-      const maxAge = remember ? 60 * 60 * 24 * 30 : 60 * 60 * 8; // 30 days or 8 hours
-      document.cookie = `crm_auth=true; path=/; max-age=${maxAge}; SameSite=Lax`;
-      localStorage.setItem("crm_auth", "true");
-      router.push("/");
-    } else {
-      setError("Invalid email or password. Please try again.");
+    if (otpMode) {
+      if (!otpSent) {
+        const r = await fetch("/api/account/otp-request", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
+        const data = await r.json().catch(() => ({}));
+        setLoading(false);
+        if (!r.ok) { setError(data.error ?? "Could not send a code. Try again."); return; }
+        setOtpSent(true);
+        setNotice(data.devCode ? `Email is not configured on this server. Development code: ${data.devCode}` : "If that email has an account, we sent a 6-digit code. It works for 10 minutes.");
+        return;
+      }
+      finish(await signIn("otp", { email, code, redirect: false }), "That code is wrong or has expired.");
+      return;
     }
-    setLoading(false);
+    finish(
+      await signIn("credentials", { email, password, redirect: false }),
+      "Invalid email or password, or the email is not verified yet. Accounts lock for 15 minutes after 5 failed attempts.",
+    );
+  };
+
+  const social = (id: "google" | "microsoft-entra-id") => {
+    if (!providers[id]) { setError("This sign-in method is not set up on this server yet."); return; }
+    signIn(id, { callbackUrl: "/" });
   };
 
   return (
@@ -68,7 +87,7 @@ export default function LoginPage() {
         <div className="px-10 py-7">
           {/* Logo */}
           <div className="flex justify-center mb-5">
-            <img src="/logo.png" alt="EVOQ CRM" style={{ height: "28px", width: "auto" }} />
+            <img src="/logo.png" alt="ServiceOps" style={{ height: "28px", width: "auto" }} />
           </div>
 
           {/* Heading */}
@@ -77,7 +96,7 @@ export default function LoginPage() {
               Welcome back
             </h1>
             <p className="text-[#8A8A8A] text-[13px] mt-0.5 font-medium">
-              Sign in to your EVOQ CRM workspace
+              Sign in to your ServiceOps workspace
             </p>
           </div>
 
@@ -88,6 +107,11 @@ export default function LoginPage() {
               <LockSimple size={14} weight="fill" className="flex-shrink-0 text-red-500" />
               {error}
             </div>
+          )}
+
+          {notice && (
+            <div className="mb-5 px-4 py-3 rounded-xl text-[13px] font-medium text-amber-800"
+              style={{ background: "#FFFBEB", border: "1px solid #FDE68A" }}>{notice}</div>
           )}
 
           <form onSubmit={handleSignIn} className="space-y-3">
@@ -103,12 +127,11 @@ export default function LoginPage() {
                   fontSize: emailFocus || email ? "10px" : "14px",
                 }}
               >
-                Email or mobile number
+                Email address
               </label>
-              <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" style={{ opacity: emailFocus || email ? 0 : 0.4 }}>
-              </div>
               <input
-                type="text"
+                type="email"
+                autoComplete="email"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
                 onFocus={() => setEmailFocus(true)}
@@ -123,7 +146,17 @@ export default function LoginPage() {
               />
             </div>
 
-            {/* Password */}
+            {/* Password, or the emailed code */}
+            {otpMode ? (otpSent && (
+              <div className="relative">
+                <input
+                  inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="6-digit code" value={code}
+                  onChange={e => setCode(e.target.value.replace(/\D/g, ""))} required
+                  className="w-full py-3 px-4 rounded-xl text-[16px] tracking-[0.4em] font-semibold text-[#1F1F1F] outline-none"
+                  style={{ background: "#F7F7F7", border: "1.5px solid #E5E5E5" }}
+                />
+              </div>
+            )) : (
             <div className="relative">
               <label
                 className="absolute left-4 transition-all duration-200 pointer-events-none font-medium z-10"
@@ -159,28 +192,11 @@ export default function LoginPage() {
                 {showPass ? <EyeSlash size={17} weight="duotone" /> : <Eye size={17} weight="duotone" />}
               </button>
             </div>
+            )}
 
-            {/* Remember + Forgot */}
+            {/* Forgot */}
             <div className="flex items-center justify-between pt-1">
-              <label className="flex items-center gap-2.5 cursor-pointer group">
-                <div
-                  onClick={() => setRemember(r => !r)}
-                  className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-all"
-                  style={{
-                    border: `1.5px solid ${remember ? "#F59E0B" : "#D4D4D4"}`,
-                    background: remember ? "#F59E0B" : "white",
-                  }}
-                >
-                  {remember && (
-                    <svg width="9" height="7" viewBox="0 0 9 7" fill="none">
-                      <path d="M1 3.5L3.5 6L8 1" stroke="#111111" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                  )}
-                </div>
-                <span className="text-[13px] font-medium text-[#3D3D3D] group-hover:text-[#1F1F1F] transition-colors select-none">
-                  Remember me
-                </span>
-              </label>
+              <span className="text-[12px] font-medium text-[#8A8A8A]">Stays signed in for 7 days</span>
               <button
                 type="button"
                 onClick={() => router.push("/forgot-password")}
@@ -212,11 +228,11 @@ export default function LoginPage() {
                     <circle cx="12" cy="12" r="10" stroke="#111111" strokeWidth="3" strokeOpacity="0.3"/>
                     <path d="M12 2a10 10 0 0 1 10 10" stroke="#111111" strokeWidth="3" strokeLinecap="round"/>
                   </svg>
-                  Signing in…
+                  {otpMode && !otpSent ? "Sending…" : "Signing in…"}
                 </>
               ) : (
                 <>
-                  Sign in
+                  {otpMode && !otpSent ? "Email me a code" : "Sign in"}
                   <ArrowRight size={15} weight="bold" />
                 </>
               )}
@@ -247,6 +263,7 @@ export default function LoginPage() {
           {/* OTP */}
           <button
             type="button"
+            onClick={() => { setOtpMode(m => !m); setOtpSent(false); setCode(""); setError(""); setNotice(""); }}
             className="w-full py-2.5 rounded-xl text-[13.5px] font-bold transition-all flex items-center justify-center gap-2 mb-3"
             style={{
               color: "#B45309",
@@ -257,7 +274,7 @@ export default function LoginPage() {
             onMouseLeave={e => { e.currentTarget.style.background = "#FFFBEB"; e.currentTarget.style.borderColor = "#FDE68A"; }}
           >
             <EnvelopeSimple size={15} weight="duotone" />
-            Get OTP
+            {otpMode ? "Use password instead" : "Email me a sign-in code"}
           </button>
 
           {/* Social login */}
@@ -271,6 +288,7 @@ export default function LoginPage() {
             {/* Google */}
             <button
               type="button"
+              onClick={() => social("google")}
               className="flex items-center justify-center gap-2.5 py-2.5 rounded-xl text-[13px] font-bold transition-all"
               style={{ color: "#374151", background: "white", border: "1.5px solid #E5E5E5" }}
               onMouseEnter={e => { e.currentTarget.style.borderColor = "#FCD34D"; e.currentTarget.style.background = "#FFFCF5"; }}
@@ -288,6 +306,7 @@ export default function LoginPage() {
             {/* Microsoft */}
             <button
               type="button"
+              onClick={() => social("microsoft-entra-id")}
               className="flex items-center justify-center gap-2.5 py-2.5 rounded-xl text-[13px] font-bold transition-all"
               style={{ color: "#374151", background: "white", border: "1.5px solid #E5E5E5" }}
               onMouseEnter={e => { e.currentTarget.style.borderColor = "#FCD34D"; e.currentTarget.style.background = "#FFFCF5"; }}

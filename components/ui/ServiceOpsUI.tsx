@@ -6,6 +6,7 @@
  * Job Details (breadcrumb, tabs, DetailCard, Field/IconField, pills) — so new
  * screens read as the same product rather than a parallel design.
  */
+import { useLayout } from "@/components/LayoutContext";
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -133,13 +134,13 @@ export function Breadcrumb({ items, homeIcon = false }: { items: Crumb[]; homeIc
   return (
     <nav aria-label="Breadcrumb" className={`flex items-center ${homeIcon ? "gap-3" : "gap-2"} text-body text-[var(--text-body)] min-w-0`}>
       {homeIcon
-        ? <Link href="/" aria-label="Home" className="hover:text-[var(--serviceops-primary)] transition-colors flex-shrink-0"><House size={20} /></Link>
-        : <Link href="/" className="hover:text-[var(--serviceops-primary)] transition-colors">Home</Link>}
+        ? <Link href="/" aria-label="Home" className="hover:text-[var(--text-primary)] hover:underline underline-offset-2 transition-colors flex-shrink-0"><House size={20} /></Link>
+        : <Link href="/" className="hover:text-[var(--text-primary)] hover:underline underline-offset-2 transition-colors">Home</Link>}
       {items.map((c, i) => (
         <span key={i} className={`flex items-center ${homeIcon ? "gap-3" : "gap-2"} min-w-0`}>
           <CaretRight size={12} className="text-[var(--text-muted)] flex-shrink-0" />
           {c.href
-            ? <Link href={c.href} className="hover:text-[var(--serviceops-primary)] transition-colors whitespace-nowrap">{c.label}</Link>
+            ? <Link href={c.href} className="hover:text-[var(--text-primary)] hover:underline underline-offset-2 transition-colors whitespace-nowrap">{c.label}</Link>
             : <span className="text-[var(--text-primary)] truncate">{c.label}</span>}
         </span>
       ))}
@@ -149,7 +150,8 @@ export function Breadcrumb({ items, homeIcon = false }: { items: Crumb[]; homeIc
 
 /** Listing page header — breadcrumb, title, one-line purpose, primary action. */
 export function PageHeader({ title, subtitle, crumbs, actions }: { title: string; subtitle: string; crumbs?: Crumb[]; actions?: ReactNode }) {
-  return (
+  const { layout } = useLayout();
+  const full = (
     <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
       <div className="min-w-0">
         <Breadcrumb items={crumbs ?? [{ label: title }]} />
@@ -158,6 +160,18 @@ export function PageHeader({ title, subtitle, crumbs, actions }: { title: string
       </div>
       {actions && <div className="flex items-center gap-2 sm:gap-3 self-start sm:self-auto sm:mb-3 flex-shrink-0">{actions}</div>}
     </div>
+  );
+  if (layout !== "compact") return full;
+  // Compact layout on desktop: the title is already in the top bar, so show only the purpose line and the actions.
+  // Phones and tablets keep the full header because they have no title in the top bar.
+  return (
+    <>
+      <div className="hidden lg:flex items-center justify-between gap-4">
+        <p className="m-0 text-body text-[var(--text-body)]">{subtitle}</p>
+        {actions && <div className="flex items-center gap-2 flex-shrink-0">{actions}</div>}
+      </div>
+      <div className="lg:hidden">{full}</div>
+    </>
   );
 }
 
@@ -171,7 +185,9 @@ export function PageShell({ children, wide = false }: { children: ReactNode; wid
 }
 
 /** Amber page-level CTA ("New job" button on the Jobs list). */
-export function PrimaryButton({ children, icon: Icon, onClick, href, size = "lg" }: { children: ReactNode; icon?: PhIcon; onClick?: () => void; href?: string; size?: "lg" | "md" }) {
+export function PrimaryButton({ children, icon: Icon, onClick, href, size: sizeProp = "lg" }: { children: ReactNode; icon?: PhIcon; onClick?: () => void; href?: string; size?: "lg" | "md" }) {
+  const { layout } = useLayout();
+  const size = layout === "compact" ? "md" : sizeProp;
   const cls = `inline-flex items-center gap-2.5 ${size === "lg" ? "h-12 px-6" : "h-10 px-4"} rounded-xl bg-[var(--serviceops-primary)] hover:bg-[var(--serviceops-hover)] text-[#111111] text-button font-semibold transition-colors shadow-[0_4px_14px_rgba(245,158,11,0.3)] whitespace-nowrap`;
   const body = <>{Icon && <Icon size={18} weight="bold" />}{children}</>;
   return href ? <Link href={href} className={cls}>{body}</Link> : <button type="button" onClick={onClick} className={cls}>{body}</button>;
@@ -431,7 +447,7 @@ export function DataTable<T>({
                     className={`${headCell} ${c.align === "right" ? "text-right pr-4" : "text-left"} ${first ? "rounded-l-xl" : ""} ${last ? "rounded-r-xl" : ""} ${c.hideBelow ? HIDE_BELOW[c.hideBelow] : ""}`}>
                     {c.sortValue ? (
                       <button type="button" onClick={() => setSort(s => ({ key: c.key, dir: s?.key === c.key && s.dir === "asc" ? "desc" : "asc" }))}
-                        className={`inline-flex items-center gap-1.5 hover:text-[var(--serviceops-primary)] transition-colors ${active ? "" : "text-[var(--text-primary)]"}`}>
+                        className={`inline-flex items-center gap-1.5 hover:text-[var(--text-primary)] hover:underline underline-offset-2 transition-colors ${active ? "" : "text-[var(--text-primary)]"}`}>
                         {c.header} <SortIcon size={13} weight="bold" className={active ? "" : "opacity-30"} />
                       </button>
                     ) : c.header}

@@ -1,12 +1,16 @@
 {
-  "name": "social-dna-labs-crm",
+  "name": "serviceops",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack -p 3100",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "db:migrate": "prisma migrate dev",
+    "db:seed": "tsx --env-file=.env prisma/seed.ts",
+    "db:studio": "prisma studio",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@emotion/react": "^11.13.3",
@@ -15,19 +19,27 @@
     "@mui/material": "^6.1.6",
     "@mui/x-data-grid": "^7.29.13",
     "@phosphor-icons/react": "^2.1.10",
+    "@prisma/client": "^6.19.3",
+    "bcryptjs": "^3.0.3",
+    "leaflet": "^1.9.4",
     "next": "^15.0.3",
+    "next-auth": "^5.0.0-beta.32",
+    "prisma": "^6.19.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "reactflow": "^11.11.4",
-    "recharts": "^2.13.3"
+    "recharts": "^2.13.3",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/leaflet": "^1.9.22",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",
+    "tsx": "^4.23.15",
     "typescript": "^5.6.3"
   },
   "packageManager": "pnpm@8.15.5+sha1.a58c038faac410c947dbdb93eb30994037d0fce2"

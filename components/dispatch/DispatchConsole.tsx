@@ -18,11 +18,16 @@ import {
 import { Breadcrumb, Pill, PriorityTag, Segmented, FilterSelect, SERVICE_ICON, useToast, type PillTone } from "@/components/ui/ServiceOpsUI";
 import { CARD_SHADOW } from "@/components/dashboard/DashboardSection";
 import { JobStatusPill } from "@/components/workorders/woShared";
+import dynamic from "next/dynamic";
+import { loadCerts, certProblem } from "@/lib/certStore";
+
+// Leaflet touches window, so the map loads in the browser only.
+const DispatchMap = dynamic(() => import("@/components/dispatch/DispatchMap"), { ssr: false, loading: () => <div className="flex-1 flex items-center justify-center text-[13px] text-[var(--text-muted)]">Loading map…</div> });
 import { useTheme } from "@/components/ThemeContext";
 import { ALL_JOBS, STATUS_META, type JobRecord } from "@/lib/jobsData";
 import {
   WORK_ORDERS, TECH_PROFILES, SERVICE_ZONES, JOBS_TODAY_TS, DAY_MS, JOB_DURATION_HRS, woStatus, workOrderById,
-  workOrderForJob, jobsOnDay, jobWindow, travelMinutes, techAvailability, techProfile, techBusy, suggestTechnicians,
+  customerByName, workOrderForJob, jobsOnDay, jobWindow, travelMinutes, techAvailability, techProfile, techBusy, suggestTechnicians,
   bookedHours, nextFreeSlot, dispatchAlerts, dispatchWorkOrder, rescheduleJob, startOfDay, DATASET_CLOCK, fmtDate, fmtDay,
   fmtTime, customerById, type WorkOrder, type Availability,
 } from "@/lib/serviceData";
@@ -66,6 +71,7 @@ export default function DispatchConsole() {
   const refresh = () => setVersion(v => v + 1);
   const [day, setDay] = useState(startOfDay(JOBS_TODAY_TS));
   const [view, setView] = useState<"timeline" | "map">("timeline");
+  const [showLoad, setShowLoad] = useState(false);
   const [queueTab, setQueueTab] = useState<"queue" | "attention">("queue");
   const [zoneF, setZoneF] = useState("All zones");
   const [sel, setSel] = useState<Sel>(null);
@@ -143,8 +149,8 @@ export default function DispatchConsole() {
   };
   const onDragEnd = () => { dragRef.current = null; setHover(null); setDragging(false); };
 
-  const pendingWarnings = (pd: Pending): { tone: "red" | "amber" | "blue"; text: string }[] => {
-    const w: { tone: "red" | "amber" | "blue"; text: string }[] = [];
+  const pendingWarnings = (pd: Pending): { tone: "red" | "amber" | "blue"; text: string; block?: boolean }[] => {
+    const w: { tone: "red" | "amber" | "blue"; text: string; block?: boolean }[] = [];
     const prof = techProfile(pd.tech);
     const dur = durationOf(pd.payload);
     const avail = techAvailability(pd.tech, pd.start);
@@ -160,7 +166,37 @@ export default function DispatchConsole() {
     if (prof && type && !prof.skills.includes(type)) w.push({ tone: "amber", text: `${pd.tech.split(" ")[0]} isn't listed for ${type} work.` });
     const zone = pd.payload.kind === "wo" ? workOrderById(pd.payload.id)?.zone : ALL_JOBS.find(j => j.id === pd.payload.id)?.region;
     if (prof && zone && prof.zone !== zone) w.push({ tone: "blue", text: `Based in ${prof.zone} zone — expect longer travel to ${zone}.` });
+    // Certification: blocks the assignment.
+    const cert = type ? certProblem(pd.tech, type, pd.start) : null;
+    if (cert) w.push({ tone: "red", text: cert, block: true });
+    // Workload guardrails: overtime and back-to-back visits.
+    const dayStart = startOfDay(pd.start);
+    const own = pd.payload.kind === "job" ? ALL_JOBS.find(j => j.id === pd.payload.id) : undefined;
+    const ownHours = own && own.technician === pd.tech && startOfDay(own.scheduledAt) === dayStart ? (jobWindow(own).end - jobWindow(own).start) / 3600000 : 0;
+    const load = bookedHours(pd.tech, dayStart) - ownHours + dur / 3600000;
+    if (load > 8) w.push({ tone: "amber", text: `${pd.tech.split(" ")[0]} would be booked ${load.toFixed(1).replace(".0", "")}h that day (over 8h).` });
+    const near = techBusy(pd.tech, pd.start, except).find(b => b.end <= pd.start && pd.start - b.end < 30 * 60000 && !(pd.start < b.end));
+    if (near && !clash) w.push({ tone: "amber", text: `Back-to-back with ${near.job.jobId}: only ${Math.round((pd.start - near.end) / 60000)} min between visits.` });
     return w;
+  };
+
+  // Notify-customer prompt after a visit is booked or moved. Uses the arrival window from Settings.
+  const [winMins, setWinMins] = useState(120);
+  const [ask, setAsk] = useState<{ customer: string; email: string; phone: string; channel: "email" | "sms" | "whatsapp"; subject: string; message: string } | null>(null);
+  useEffect(() => { loadCerts().then(() => setVersion(v => v + 1)); fetch("/api/org").then(r => (r.ok ? r.json() : null)).then(o => { if (o?.arrivalWindowMins) setWinMins(o.arrivalWindowMins); }).catch(() => {}); }, []);
+  const askToNotify = (customer: string, jobName: string, start: number) => {
+    const cust = customerByName(customer);
+    const when = `${weekday(start)}, ${fmtDate(start)} between ${fmtTime(start)} and ${fmtTime(start + winMins * 60000)}`;
+    setAsk({ customer, email: cust?.email ?? "", phone: cust?.phone ?? "", channel: "email", subject: `Your visit is booked: ${jobName}`, message: `Hello,
+
+Your service visit (${jobName}) is booked for ${when}. A technician will arrive within that window. Reply or call us if you need to change it.` });
+  };
+  const sendAsk = async () => {
+    if (!ask) return;
+    const res = await fetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel: ask.channel, event: "appointment.booked", to: ask.channel === "email" ? ask.email : ask.phone, subject: ask.subject, message: ask.message }) });
+    const d = await res.json().catch(() => ({}));
+    notify(res.ok ? (d.status === "sent" ? `${ask.customer} was emailed` : "Recorded by the test provider. Read it in Settings, Delivery log. Nothing was sent.") : "Could not send the message", undefined, res.ok && d.status === "sent" ? "success" : "info");
+    setAsk(null);
   };
 
   const confirmPending = () => {
@@ -168,10 +204,12 @@ export default function DispatchConsole() {
     const { payload, tech, start } = pending;
     if (payload.kind === "wo") {
       const job = dispatchWorkOrder(payload.id, tech, start);
+      if (job) askToNotify(job.customer, job.jobName, start);
       if (job) { setSel({ kind: "job", id: job.id }); notify(`${job.jobId} scheduled with ${tech} · ${fmtDay(start)}, ${fmtTime(start)}`, `/jobs/${job.id}`); }
     } else {
       const job = ALL_JOBS.find(j => j.id === payload.id);
       rescheduleJob(payload.id, tech, start);
+      if (job && start !== jobWindow(job).start) askToNotify(job.customer, job.jobName, start);
       if (job) notify(`${job.jobId} moved to ${tech} · ${fmtTime(start)}`);
       setSel({ kind: "job", id: payload.id });
     }
@@ -362,65 +400,23 @@ export default function DispatchConsole() {
     </div>
   );
 
-  // ── Schematic map ──
-  const ZONE_BOX: Record<string, { x: number; y: number; w: number; h: number }> = {
-    North: { x: 160, y: 10, w: 280, h: 110 }, West: { x: 10, y: 130, w: 140, h: 160 }, Central: { x: 160, y: 130, w: 280, h: 160 },
-    East: { x: 450, y: 130, w: 140, h: 160 }, South: { x: 160, y: 300, w: 280, h: 110 },
+  // ── Live map ──
+  const applyRoute = (tech: string, times: { id: number; start: number }[]) => {
+    times.forEach(t => rescheduleJob(t.id, tech, t.start));
+    refresh();
+    notify(`${tech}'s route reordered (${times.length} visits). Customers have not been told; update them from each job.`);
   };
-  const spot = (zone: string, seed: number) => {
-    const b = ZONE_BOX[zone] ?? ZONE_BOX.Central;
-    return { x: b.x + 24 + ((seed * 53) % (b.w - 48)), y: b.y + 30 + ((seed * 37) % (b.h - 54)) };
-  };
-  const map = (
-    <div className="flex-1 overflow-auto p-4 min-h-0">
-      <svg viewBox="0 0 600 420" className="w-full max-w-[900px] mx-auto block" role="img" aria-label="Schematic map of service zones">
-        {Object.entries(ZONE_BOX).map(([z, b]) => (
-          <g key={z} opacity={zoneOk(z) ? 1 : 0.35}>
-            <rect x={b.x} y={b.y} width={b.w} height={b.h} rx={14} fill={isDark ? "#18110B" : "#F7F7F7"} stroke={isDark ? "#4B2F1C" : "#E5E5E5"} />
-            <text x={b.x + 12} y={b.y + 20} fontSize={11} fontWeight={600} fill={isDark ? "#D0A966" : "#6B6B6B"}>{z.toUpperCase()}</text>
-          </g>
-        ))}
-        {queue.map(w => {
-          const p = spot(w.zone, w.id + 7);
-          const active = sel?.kind === "wo" && sel.id === w.id;
-          return (
-            <g key={`w${w.id}`} className="cursor-pointer" onClick={() => setSel({ kind: "wo", id: w.id })}>
-              <title>{`${w.number} · ${w.title} (unscheduled)`}</title>
-              <circle cx={p.x} cy={p.y} r={active ? 9 : 7} fill={isDark ? "#18110B" : "#fff"} stroke="#F59E0B" strokeWidth={2.5} strokeDasharray="3 2" />
-            </g>
-          );
-        })}
-        {dayJobs.filter(j => zoneOk(j.region)).map(j => {
-          const p = spot(j.region, j.id);
-          const m = STATUS_META[j.status];
-          const active = sel?.kind === "job" && sel.id === j.id;
-          return (
-            <g key={`j${j.id}`} className="cursor-pointer" onClick={() => setSel({ kind: "job", id: j.id })}>
-              <title>{`${j.jobId} · ${j.customer} · ${j.technician} · ${j.status}`}</title>
-              <circle cx={p.x} cy={p.y} r={active ? 9 : 7} fill={isDark ? m.dark : m.light} stroke={isDark ? "#0D0A07" : "#fff"} strokeWidth={2} />
-            </g>
-          );
-        })}
-      </svg>
-      <div className="mt-3 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-caption text-[var(--text-muted)]">
-        <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full border-2 border-dashed border-[#F59E0B]" />To schedule</span>
-        <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-[#2563EB]" />Scheduled / en route</span>
-        <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-[#16A34A]" />On site / done</span>
-        <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-[#F59E0B]" />Incomplete</span>
-        <span>Schematic view · <Link href="/integrations" className="text-blue-600 hover:underline">connect Maps</Link> for live locations</span>
-      </div>
-    </div>
-  );
+  const map = <DispatchMap jobs={dayJobs} queue={queue} selId={sel} zoneOk={zoneOk} isDark={isDark} onSelect={setSel} onApply={applyRoute} />;
 
   const schedulePanel = (
-    <Panel className="lg:h-full" title={
+    <Panel className="lg:h-full flex-1 min-w-0" title={
       <span className="inline-flex items-center gap-2">
         <IconButton size="small" aria-label="Previous day" onClick={() => setDay(d => d - DAY_MS)}><CaretLeft size={16} weight="bold" /></IconButton>
         <span className="whitespace-nowrap">{weekday(day)}, {fmtDate(day)}</span>
         <IconButton size="small" aria-label="Next day" onClick={() => setDay(d => d + DAY_MS)}><CaretRight size={16} weight="bold" /></IconButton>
         {!isToday && <Button size="small" onClick={() => setDay(startOfDay(JOBS_TODAY_TS))}>Today</Button>}
       </span>
-    } right={<Segmented size="sm" value={view} onChange={setView} options={[{ value: "timeline", label: "Timeline" }, { value: "map", label: "Map" }]} />}>
+    } right={<span className="flex items-center gap-2"><button type="button" aria-pressed={showLoad} onClick={() => { setShowLoad(v => !v); setSel(null); }} className={`h-8 px-3 rounded-[10px] text-[13px] font-semibold border ${showLoad ? "border-[var(--serviceops-primary)] bg-[var(--serviceops-primary-10)]" : "border-[var(--border)]"} text-[var(--text-primary)]`}>Workload</button><Segmented size="sm" value={view} onChange={setView} options={[{ value: "timeline", label: "Timeline" }, { value: "map", label: "Map" }]} /></span>}>
       {view === "timeline" ? timeline : map}
     </Panel>
   );
@@ -583,9 +579,37 @@ export default function DispatchConsole() {
     );
   }
 
-  const detailTitle = selWO ? "Schedule work order" : selJob ? "Job" : "Technician";
+  // Nothing selected: show how evenly the day is spread across technicians who are working.
+  if (!details) {
+    const rows = TECH_PROFILES.filter(t => !["On leave", "Off today"].includes(techAvailability(t.name, day))).map(t => ({ name: t.name, h: bookedHours(t.name, day) }));
+    const avg = rows.length ? rows.reduce((s, r) => s + r.h, 0) / rows.length : 0;
+    const max = Math.max(8, ...rows.map(r => r.h));
+    details = (
+      <div className="flex flex-col gap-3">
+        <p className="m-0 text-caption text-[var(--text-muted)]">{fmtDay(day)} · average {avg.toFixed(1).replace(".0", "")}h booked per available technician. The line marks 8 hours.</p>
+        <ul className="m-0 p-0 list-none flex flex-col gap-2.5">
+          {rows.sort((a, b) => b.h - a.h).map(r => {
+            const over = r.h > 8, light = avg > 0 && r.h < avg * 0.5;
+            return (
+              <li key={r.name} className="text-[13px]">
+                <div className="flex justify-between gap-2"><span className="text-[var(--text-primary)] truncate">{r.name}</span>
+                  <span className="whitespace-nowrap" style={{ color: over ? "#DC2626" : light ? "#2563EB" : "var(--text-body)" }}>{r.h.toFixed(1).replace(".0", "")}h{over ? " · over" : light ? " · light" : ""}</span></div>
+                <div className="relative h-2 mt-1 rounded-full bg-[var(--serviceops-tint)]">
+                  <div className="h-full rounded-full" style={{ width: `${(r.h / max) * 100}%`, background: over ? "#EF4444" : "var(--serviceops-primary)" }} />
+                  <span className="absolute top-[-2px] h-3 w-px bg-[var(--text-muted)]" style={{ left: `${(8 / max) * 100}%` }} />
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+        <p className="m-0 text-caption text-[var(--text-muted)]">Drag work onto the lightest day first. Pick a technician or a job to see details.</p>
+      </div>
+    );
+  }
+
+  const detailTitle = selWO ? "Schedule work order" : selJob ? "Job" : sel ? "Technician" : "Team workload";
   const detailsPanel = (
-    <Panel className="h-full !shadow-[0_12px_40px_rgba(17,17,17,0.16)]" title={detailTitle} right={sel ? <IconButton size="small" aria-label="Clear selection" onClick={() => setSel(null)}><X size={16} /></IconButton> : undefined}>
+    <Panel className="h-full !shadow-[0_12px_40px_rgba(17,17,17,0.16)]" title={detailTitle} right={sel || showLoad ? <IconButton size="small" aria-label="Close panel" onClick={() => { setSel(null); setShowLoad(false); }}><X size={16} /></IconButton> : undefined}>
       <div className="flex-1 overflow-y-auto px-4 pb-4 min-h-0">{details}</div>
     </Panel>
   );
@@ -596,8 +620,8 @@ export default function DispatchConsole() {
   const warnings = pending ? pendingWarnings(pending) : [];
 
   return (
-    <div className="sidebar-content flex-1 flex flex-col min-h-screen">
-      <main className="flex-1 flex flex-col px-4 sm:px-6 lg:px-8 py-4 sm:py-5 gap-4 animate-fade-in min-w-0">
+    <div className="sidebar-content flex-1 flex flex-col min-h-screen lg:h-screen lg:min-h-0 lg:overflow-hidden">
+      <main className="flex-1 min-h-0 flex flex-col px-4 sm:px-6 lg:px-8 py-4 sm:py-5 gap-4 animate-fade-in min-w-0 lg:overflow-y-auto">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-3">
           <div className="min-w-0">
             <Breadcrumb items={[{ label: "Dispatch" }]} />
@@ -627,12 +651,12 @@ export default function DispatchConsole() {
         )}
 
         {isLG ? (
-          <div className="grid gap-4 flex-1 min-h-0 grid-cols-[290px_minmax(0,1fr)]" style={{ height: "calc(100vh - 230px)", minHeight: 520 }}>
+          <div className="grid gap-4 flex-1 grid-cols-[290px_minmax(0,1fr)]" style={{ minHeight: 480 }}>
             {queuePanel}
             {/* Details float over the late-day hours only while something is selected, so the schedule keeps its width */}
             <div className="relative min-w-0 min-h-0 flex">
               {schedulePanel}
-              {sel && !dragging && <div className="absolute top-0 right-0 bottom-0 w-[350px] max-w-[85%] z-30 flex">{detailsPanel}</div>}
+              {(sel || showLoad) && !dragging && <div className="absolute top-0 right-0 bottom-0 w-[350px] max-w-[85%] z-30 flex">{detailsPanel}</div>}
             </div>
           </div>
         ) : (
@@ -679,8 +703,19 @@ export default function DispatchConsole() {
             <p className="m-0 text-caption text-[var(--text-muted)]">{pending.tech.split(" ")[0]} gets the update on the ServiceOps mobile app.</p>
             <div className="flex justify-end gap-2">
               <Button onClick={() => setPending(null)} sx={{ color: "var(--text-muted)" }}>Cancel</Button>
-              <Button variant="contained" onClick={confirmPending}>{warnings.some(w => w.tone === "red") ? "Schedule anyway" : pendingWO ? "Schedule" : "Move job"}</Button>
+              <Button variant="contained" onClick={confirmPending} disabled={warnings.some(w => w.block)}>{warnings.some(w => w.block) ? "Not allowed" : warnings.some(w => w.tone === "red") ? "Schedule anyway" : pendingWO ? "Schedule" : "Move job"}</Button>
             </div>
+          </div>
+        )}
+      </Dialog>
+
+      <Dialog open={!!ask} onClose={() => setAsk(null)} maxWidth="xs" fullWidth>
+        {ask && (
+          <div className="p-5 flex flex-col gap-3">
+            <h2 className="m-0 text-h2 font-bold text-[var(--text-primary)]">Notify {ask.customer}?</h2>
+            <div className="flex items-center gap-2"><select aria-label="Channel" className="h-9 px-3 rounded-[10px] text-[13px] border-[1.5px] border-[var(--serviceops-soft)] bg-[var(--bg-card)]" value={ask.channel} onChange={e => setAsk({ ...ask, channel: e.target.value as "email" | "sms" | "whatsapp" })}><option value="email">Email</option><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option></select><span className="text-body text-[var(--text-body)]">to {(ask.channel === "email" ? ask.email : ask.phone) || "(no contact on file)"}</span></div>
+            <textarea aria-label="Message to customer" rows={5} value={ask.message} onChange={e => setAsk({ ...ask, message: e.target.value })} className="w-full rounded-[10px] border-[1.5px] border-[var(--serviceops-soft)] bg-[var(--bg-card)] p-2.5 text-[13px] text-[var(--text-primary)]" />
+            <div className="flex justify-end gap-2"><Button onClick={() => setAsk(null)} sx={{ color: "var(--text-muted)" }}>Skip</Button><Button variant="contained" onClick={sendAsk}>Send</Button></div>
           </div>
         )}
       </Dialog>

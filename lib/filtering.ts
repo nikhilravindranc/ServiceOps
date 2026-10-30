@@ -1,4 +1,4 @@
-import type { FilterRow } from "@/components/leads/FiltersDrawer";
+import type { FilterRow } from "@/components/shared/FiltersDrawer";
 
 /** Applies the "More filters" conditions (FiltersDrawer) — same semantics as the Jobs list. */
 export function matchesAdvanced(record: Record<string, string>, filters: FilterRow[]): boolean {

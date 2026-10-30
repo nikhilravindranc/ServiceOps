@@ -1,4 +1,5 @@
 "use client";
+import EstimateExtras from "@/components/workorders/EstimateExtras";
 import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -236,8 +237,8 @@ export default function WorkOrderDetail({ woId }: { woId: number }) {
           );
         })()}
       </div>
+      <EstimateExtras estimate={estimate} wo={wo} email={contact?.email || customerById(wo.customerId)?.email} refresh={refresh} notify={notify} />
       <div className="flex flex-wrap gap-2 justify-end">
-        {estimate.status === "Draft" && <Button variant="contained" startIcon={<PaperPlaneTilt size={14} />} onClick={() => estimateAction("Sent")}>Send to customer</Button>}
         {estimate.status === "Sent" && (
           <>
             <Button variant="outlined" color="error" onClick={() => estimateAction("Declined")}>Mark declined</Button>

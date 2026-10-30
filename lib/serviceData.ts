@@ -907,7 +907,18 @@ export interface Estimate {
   validUntil: number;
   status: EstimateStatus;
   lines: PriceLine[];
+  /** Good / better / best choices offered to the customer. `lines` always holds the lines that count toward the total. */
+  options?: EstimateOption[];
+  /** Share of the total collected when the estimate is approved. */
+  depositPct?: number;
+  chosenOption?: string;
+  /** Deposit collected through the customer link (test mode until a processor is connected). */
+  depositPaid?: number;
+  approval?: { name: string; at: number; via: "customer link" | "office" };
+  sentAt?: number;
+  followUps?: number;
 }
+export interface EstimateOption { key: string; label: string; lines: PriceLine[] }
 export const estimateTotal = (e: Estimate) => Math.round(e.lines.reduce((s, l) => s + l.qty * l.rate, 0) * 1.18);
 
 const SPECIAL_LINES: Record<string, PriceLine[]> = {
@@ -1001,6 +1012,7 @@ function buildInvoices(): Invoice[] {
 }
 
 const HISTORIC_INVOICES: Invoice[] = buildInvoices();
+export const HISTORIC_INVOICE_STORE = HISTORIC_INVOICES;
 
 export type BillingState = "Not billable yet" | "Ready to invoice" | "Invoiced" | "Paid" | "Not billable";
 
@@ -1010,7 +1022,7 @@ export function billingStateForJob(jobId?: number): BillingState {
   if (!job) return "Not billable";
   if (job.status === "Cancelled") return "Not billable";
   if (job.status !== "Completed") return "Not billable yet";
-  if (getWorkspace(job.id).invoice) return "Invoiced";
+  if (getWorkspace(job.id).invoice) return getWorkspace(job.id).paidOn ? "Paid" : "Invoiced";
   return job.id % 3 === 0 ? "Ready to invoice" : "Paid";
 }
 
@@ -1039,6 +1051,7 @@ export const outstanding = (i: Invoice) => i.amount - i.paid;
 export function recordPayment(inv: Invoice) {
   const h = HISTORIC_INVOICES.find(x => x.number === inv.number);
   if (h) { h.paid = h.amount; h.status = "Paid"; }
+  if (inv.jobId) getWorkspace(inv.jobId).paidOn = Date.now();
 }
 
 // ─────────────────────────────────────────────

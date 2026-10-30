@@ -8,20 +8,24 @@ import MenuItem from "@mui/material/MenuItem";
 import Button from "@mui/material/Button";
 import {
   Buildings, Clock, Hash, Wrench, ListChecks, Flag, Timer, MapTrifold, UsersThree, Bell, FileText, SquaresFour, ShieldCheck,
-  Plus, PencilSimple, DotsSixVertical,
+  Plus, PencilSimple, DotsSixVertical, Database,
 } from "@phosphor-icons/react";
 import { PageShell, PageHeader, MiniTable, Pill, SERVICE_ICON, useToast, Segmented } from "@/components/ui/ServiceOpsUI";
 import { CARD_SHADOW } from "@/components/dashboard/DashboardSection";
 import { useJobFieldSx } from "@/components/jobs/jobFormStyles";
-import { CustomizeHomepagePanel, PermissionPanel, RolesPanel } from "@/components/settings/LegacySettings";
+import DataPanel from "@/components/settings/DataPanel";
+import AppearancePanel from "@/components/settings/AppearancePanel";
+import { CertPanel, DeliveryLogPanel, AutomationsPanel } from "@/components/settings/OpsPanels";
+import { PermissionPanel, RolesPanel } from "@/components/settings/AccessPanels";
 import { SERVICE_TYPE_ORDER, STATUS_ORDER, STATUS_META, PRIORITY_META, SLA_HOURS_BY_SERVICE, type JobStatus } from "@/lib/jobsData";
 import { SERVICE_ZONES, TECH_PROFILES, CUSTOMERS, USERS, JOB_DURATION_HRS } from "@/lib/serviceData";
 import { useTheme } from "@/components/ThemeContext";
 
-type Key = "general" | "hours" | "numbering" | "types" | "statuses" | "priorities" | "sla" | "zones" | "teams" | "notifications" | "templates" | "homepage" | "permission";
+type Key = "general" | "hours" | "numbering" | "types" | "statuses" | "priorities" | "sla" | "zones" | "teams" | "notifications" | "templates" | "permission" | "data" | "certs" | "deliverylog" | "automations" | "appearance";
 const NAV: { group: string; items: { key: Key; label: string; icon: typeof Buildings; hint: string }[] }[] = [
   { group: "Organization", items: [
     { key: "general", label: "General", icon: Buildings, hint: "Company details, time zone, currency" },
+    { key: "appearance", label: "Appearance", icon: SquaresFour, hint: "Colour theme, layout, banner" },
     { key: "hours", label: "Business hours", icon: Clock, hint: "Working week and holidays" },
     { key: "numbering", label: "Numbering", icon: Hash, hint: "Prefixes for records" },
   ] },
@@ -30,20 +34,23 @@ const NAV: { group: string; items: { key: Key; label: string; icon: typeof Build
     { key: "statuses", label: "Job statuses", icon: ListChecks, hint: "The job lifecycle" },
     { key: "priorities", label: "Priorities", icon: Flag, hint: "Urgency levels" },
     { key: "sla", label: "SLA", icon: Timer, hint: "Response and resolution targets" },
+    { key: "certs", label: "Certifications", icon: ShieldCheck, hint: "Who is qualified for what, and when it expires" },
     { key: "zones", label: "Service zones", icon: MapTrifold, hint: "Dispatch regions" },
     { key: "teams", label: "Teams", icon: UsersThree, hint: "Groups of technicians and staff" },
   ] },
   { group: "Communication", items: [
     { key: "notifications", label: "Notifications", icon: Bell, hint: "Who hears about what" },
     { key: "templates", label: "Templates", icon: FileText, hint: "Job cards, reports, messages" },
+    { key: "automations", label: "Automations", icon: Timer, hint: "Follow-ups and reminders that run for you" },
+    { key: "deliverylog", label: "Delivery log", icon: Bell, hint: "Every customer message sent or recorded" },
   ] },
   { group: "Access & workspace", items: [
     { key: "permission", label: "Roles & permissions", icon: ShieldCheck, hint: "What each role can do" },
-    { key: "homepage", label: "Dashboards", icon: SquaresFour, hint: "Home page layouts" },
+    { key: "data", label: "Data & booking", icon: Database, hint: "CSV import, sample data, online booking" },
   ] },
 ];
 const ALL = NAV.flatMap(g => g.items);
-// Old CRM links (?tab=roles) still land somewhere sensible.
+// Older links (?tab=roles) still land somewhere sensible.
 const ALIASES: Record<string, Key> = { roles: "permission", users: "general", organization: "general", personal: "general" };
 
 function Panel({ title, description, action, children }: { title: string; description: string; action?: ReactNode; children: ReactNode }) {
@@ -93,6 +100,11 @@ export default function ServiceSettings() {
 
   const content = (() => {
     switch (active) {
+      case "certs": return <Panel title="Certifications" description="Block assignments to technicians whose qualification is missing or expired."><CertPanel notify={notify} /></Panel>;
+      case "automations": return <Panel title="Automations" description="Follow-ups and reminders that run for you."><AutomationsPanel notify={notify} /></Panel>;
+      case "deliverylog": return <Panel title="Delivery log" description="Customer messages sent or recorded by ServiceOps."><DeliveryLogPanel notify={notify} /></Panel>;
+      case "appearance": return <Panel title="Appearance" description="Colour theme, layout and the Home banner."><AppearancePanel notify={notify} /></Panel>;
+      case "data": return <Panel title="Data & booking" description="Import records, reset sample data and set up online booking."><DataPanel notify={notify} /></Panel>;
       case "general": return (
         <Panel title="General" description="How ServiceOps describes your business and formats information." action={saveBtn}>
           <Row label="Company name">{field({ defaultValue: "Northeast Facility Services" })}</Row>
@@ -296,11 +308,6 @@ export default function ServiceSettings() {
           </div>
         </div>
       );
-      case "homepage": return (
-        <div className="rounded-2xl border border-[var(--border-soft)] overflow-hidden flex flex-col min-h-[560px]" style={{ boxShadow: CARD_SHADOW }}>
-          <CustomizeHomepagePanel />
-        </div>
-      );
     }
   })();
 
@@ -328,8 +335,8 @@ export default function ServiceSettings() {
                   const on = i.key === active;
                   return (
                     <button key={i.key} type="button" onClick={() => go(i.key)} aria-current={on ? "page" : undefined}
-                      className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors ${on ? "bg-[var(--serviceops-primary-10)] text-[var(--text-primary)] font-semibold" : "text-[var(--text-body)] hover:bg-[var(--serviceops-tint)]"}`}>
-                      <Icon size={17} weight="duotone" className={on ? "text-[var(--serviceops-primary)]" : "text-[var(--text-muted)]"} />
+                      className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors ${on ? "bg-[var(--serviceops-primary-10)] text-[var(--text-primary)] font-semibold" : "text-[var(--text-body)] hover:bg-[rgba(17,17,17,0.06)] hover:text-[var(--text-primary)]"}`}>
+                      <Icon size={17} weight="duotone" className={on ? "text-[#C2410C]" : "text-[var(--text-muted)]"} />
                       <span className="text-body">{i.label}</span>
                     </button>
                   );

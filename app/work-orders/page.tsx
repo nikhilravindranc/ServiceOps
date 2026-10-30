@@ -1,4 +1,5 @@
 "use client";
+import { useOpenOnNew } from "@/lib/useOpenOnNew";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import IconButton from "@mui/material/IconButton";
@@ -6,7 +7,7 @@ import {
   Plus, CalendarBlank, SlidersHorizontal, ClipboardText, Sparkle, HourglassMedium, CalendarCheck, Truck,
   Pulse, CheckCircle, Eye, XCircle, UserCircle, FileText,
 } from "@phosphor-icons/react";
-import FiltersDrawer, { type FilterRow } from "@/components/leads/FiltersDrawer";
+import FiltersDrawer, { type FilterRow } from "@/components/shared/FiltersDrawer";
 import NewWorkOrderDrawer from "@/components/workorders/NewWorkOrderDrawer";
 import { WO_STATUS_TONE, WOStatusPill, woSummary } from "@/components/workorders/woShared";
 import {
@@ -70,6 +71,7 @@ export default function WorkOrdersPage() {
   const [adv, setAdv] = useState<FilterRow[]>([]);
   const [advAnchor, setAdvAnchor] = useState<HTMLElement | null>(null);
   const [newOpen, setNewOpen] = useState(false);
+  useOpenOnNew(() => setNewOpen(true));
 
   const rows = useMemo(() => WORK_ORDERS.map(wo => ({ wo, ...woSummary(wo) })), [version]); // eslint-disable-line react-hooks/exhaustive-deps
 

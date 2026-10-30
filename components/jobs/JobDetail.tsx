@@ -26,6 +26,7 @@ import {
   Pulse, Envelope, MapPin, UserCircle, Car, FlagCheckered, Ruler, Timer,
 } from "@phosphor-icons/react";
 import EditJobDrawer from "@/components/jobs/EditJobDrawer";
+import JobCosting from "@/components/jobs/JobCosting";
 import JobActionDialogs, { type JobDialogKind } from "@/components/jobs/JobActionDialogs";
 import JobPrintSheet, { type PrintKind, type PrintPayload } from "@/components/jobs/JobPrintSheet";
 import { CARD_SHADOW, type Tone } from "@/components/dashboard/DashboardSection";
@@ -39,7 +40,7 @@ import {
   generateInvoice, setJobChecklist, toEditInput, formatFileSize, nowStamp,
   type JobRecord, type ServiceType, type JobStatus, type EditJobInput, type JobPart,
 } from "@/lib/jobsData";
-import { workOrderForJob, assetForJob, customerHref } from "@/lib/serviceData";
+import { workOrderForJob, assetForJob, customerHref, customerByName } from "@/lib/serviceData";
 
 // ─────────────────────────────────────────────
 //  Per-service-type template data (drives the
@@ -260,6 +261,7 @@ const TABS = [
   { key: "overview",    label: "Overview" },
   { key: "services",    label: "Services and Parts" },
   { key: "timesheet",   label: "Time Sheet" },
+  { key: "costing",     label: "Costing" },
   { key: "tripsheet",   label: "Trip Sheet" },
   { key: "attachments", label: "Attachments" },
   { key: "related",     label: "Related" },
@@ -504,6 +506,15 @@ export default function JobDetail({ jobId }: { jobId: number }) {
     notify(`${part.item} added`);
   };
 
+  const handleReviewRequest = async () => {
+    const email = customerByName(job.customer)?.email ?? "";
+    const res = await fetch("/api/public-links", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "review", ref: job.jobId, customer: job.customer, title: job.jobName, email }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { notify("Could not create the review link"); return; }
+    if (data.emailed) notify(`Review request emailed to ${email}`);
+    else { navigator.clipboard?.writeText(data.url).catch(() => {}); notify("Review link created and copied. Email is not configured here, so share it by hand."); }
+  };
+
   const handleClone = () => {
     const extras = JOB_EXTRAS[job.id];
     const copy = createJob({
@@ -682,9 +693,9 @@ export default function JobDetail({ jobId }: { jobId: number }) {
 
         {/* ── Breadcrumb ── */}
         <nav aria-label="Breadcrumb" className="flex items-center gap-3 text-body text-[var(--text-body)]">
-          <Link href="/" aria-label="Home" className="hover:text-[var(--serviceops-primary)] transition-colors"><House size={20} /></Link>
+          <Link href="/" aria-label="Home" className="hover:text-[var(--text-primary)] hover:underline underline-offset-2 transition-colors"><House size={20} /></Link>
           <CaretRight size={12} className="text-[var(--text-muted)]" />
-          <Link href="/jobs" className="hover:text-[var(--serviceops-primary)] transition-colors">Jobs</Link>
+          <Link href="/jobs" className="hover:text-[var(--text-primary)] hover:underline underline-offset-2 transition-colors">Jobs</Link>
           <CaretRight size={12} className="text-[var(--text-muted)]" />
           <span className="text-[var(--text-primary)] truncate">{job.jobId}</span>
         </nav>
@@ -740,6 +751,11 @@ export default function JobDetail({ jobId }: { jobId: number }) {
               <MenuItem onClick={() => handlePrint("invoice")} sx={MENU_ITEM_SX}>
                 <ListItemIcon sx={{ minWidth: 30 }}><Printer size={16} weight="duotone" /></ListItemIcon>
                 <ListItemText primaryTypographyProps={MENU_TEXT}>Print invoice</ListItemText>
+              </MenuItem>
+              <Divider sx={{ my: 0.5 }} />
+              <MenuItem onClick={handleReviewRequest} disabled={job.status !== "Completed"} sx={MENU_ITEM_SX}>
+                <ListItemIcon sx={{ minWidth: 30 }}><Star size={16} weight="duotone" /></ListItemIcon>
+                <ListItemText primaryTypographyProps={MENU_TEXT}>Request a review</ListItemText>
               </MenuItem>
               <Divider sx={{ my: 0.5 }} />
               <MenuItem onClick={handleCancelJob} disabled={job.status === "Cancelled"} sx={{ ...MENU_ITEM_SX, color: "#EF4444" }}>
@@ -875,6 +891,11 @@ export default function JobDetail({ jobId }: { jobId: number }) {
             {partsCard}
             {invoiceCard}
           </div>
+        )}
+
+        {/* ══════════════ COSTING ══════════════ */}
+        {activeTab === "costing" && detail && job && (
+          <JobCosting jobId={job.id} revenue={detail.labor + detail.partsTotal - detail.discount} parts={detail.parts} />
         )}
 
         {/* ══════════════ TIME SHEET ══════════════ */}

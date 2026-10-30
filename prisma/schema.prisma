@@ -1,0 +1,270 @@
+// Local development uses SQLite so the app runs with no database server.
+// For production Postgres: set provider = "postgresql", point DATABASE_URL at the server, run `npx prisma migrate dev`.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id             String   @id @default(cuid())
+  name           String
+  industry       String?
+  timezone       String   @default("America/New_York")
+  currency       String   @default("USD")
+  taxPct         Float    @default(18)
+  hoursStart     String   @default("08:00")
+  hoursEnd       String   @default("17:00")
+  serviceTypes   String   @default("[]") // JSON array of names chosen in onboarding
+  zones          String   @default("[]") // JSON array of names chosen in onboarding
+  sampleData     Boolean  @default(true)
+  onboardingStep Int      @default(0)
+  onboardedAt    DateTime?
+  slug           String?  @unique        // public booking page address
+  bookingEnabled Boolean  @default(false)
+  revenueGoal    Float    @default(0)
+  homeBanner     String   @default("photo") // preset key, "custom" or "none"
+  homeBannerImage String? // data URL of an uploaded banner (used when homeBanner is "custom")
+  brandTheme     String?  // JSON: { theme, custom } colour theme chosen in Settings > Appearance
+  geoLat         Float?   // optional work-area centre for the time clock
+  geoLng         Float?
+  geoRadiusM     Int?
+  arrivalWindowMins Int   @default(120)  // length of the arrival window promised to customers
+  createdAt      DateTime @default(now())
+
+  users    User[]
+  invites  Invite[]
+  requests Request[]
+  catalog  CatalogItem[]
+  costs    JobCostEntry[]
+  audit    AuditLog[]
+  snapshot WorkspaceSnapshot?
+  links    PublicLink[]
+  notifications NotificationLog[]
+  automations   Automation[]
+  certifications Certification[]
+  reviews  Review[]
+  timeEntries TimeEntry[]
+}
+
+model User {
+  id              String    @id @default(cuid())
+  orgId           String
+  org             Organization @relation(fields: [orgId], references: [id])
+  name            String
+  email           String    @unique
+  passwordHash    String?
+  role            String    @default("Administrator") // Administrator | Service manager | Dispatcher | Service coordinator | Technician
+  status          String    @default("Active")        // Active | Invited | Deactivated
+  emailVerifiedAt DateTime?
+  failedLogins    Int       @default(0)
+  lockedUntil     DateTime?
+  lastLoginAt     DateTime?
+  createdAt       DateTime  @default(now())
+}
+
+// One-time tokens: email verification, password reset, sign-in code.
+model AuthToken {
+  id        String   @id @default(cuid())
+  email     String
+  type      String   // verify | reset | otp
+  tokenHash String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([email, type])
+}
+
+model Invite {
+  id           String   @id @default(cuid())
+  orgId        String
+  org          Organization @relation(fields: [orgId], references: [id])
+  email        String
+  role         String
+  tokenHash    String
+  expiresAt    DateTime
+  acceptedAt   DateTime?
+  invitedById  String?
+  createdAt    DateTime @default(now())
+
+  @@index([email])
+}
+
+model Request {
+  id           String   @id @default(cuid())
+  orgId        String
+  org          Organization @relation(fields: [orgId], references: [id])
+  number       String
+  customerName String
+  contactName  String?
+  email        String?
+  phone        String?
+  source       String   @default("Phone") // Phone | Email | Web form | Online booking | Customer portal | Technician
+  serviceType  String   @default("HVAC")
+  priority     String   @default("Medium")
+  title        String
+  description  String?
+  site         String?
+  campaign     String?
+  status       String   @default("New")   // New | Reviewing | Converted | Declined
+  convertedTo  String?                    // e.g. "work-order:42" or "estimate:EST-2024-0311"
+  createdById  String?
+  createdAt    DateTime @default(now())
+
+  @@unique([orgId, number])
+  @@index([orgId, status])
+}
+
+model CatalogItem {
+  id          String   @id @default(cuid())
+  orgId       String
+  org         Organization @relation(fields: [orgId], references: [id])
+  kind        String   @default("service") // service | product
+  name        String
+  sku         String?
+  unit        String   @default("each")
+  price       Float
+  cost        Float    @default(0)
+  taxable     Boolean  @default(true)
+  serviceType String?
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@index([orgId, kind])
+}
+
+// Costs booked against a job; jobs themselves still come from the in-memory dataset until their migration.
+model JobCostEntry {
+  id        String   @id @default(cuid())
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id])
+  jobId     Int
+  kind      String   // labour | part | overhead | other
+  label     String
+  qty       Float    @default(1)
+  unitCost  Float    @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([orgId, jobId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  orgId     String?
+  org       Organization? @relation(fields: [orgId], references: [id])
+  userId    String?
+  action    String
+  entity    String?
+  entityId  String?
+  meta      String?
+  at        DateTime @default(now())
+
+  @@index([orgId, at])
+}
+
+// Operational data (customers, work orders, jobs, estimates, assets, parts...) kept as one versioned JSON document
+// per organization while those entities are still migrated to tables one by one.
+model WorkspaceSnapshot {
+  orgId     String   @id
+  org       Organization @relation(fields: [orgId], references: [id])
+  json      String
+  version   Int      @default(1)
+  updatedAt DateTime @updatedAt
+}
+
+// A link sent to a customer: approve an estimate with a signature, or pay an invoice.
+model PublicLink {
+  id            String   @id @default(cuid())
+  orgId         String
+  org           Organization @relation(fields: [orgId], references: [id])
+  kind          String   // estimate | invoice
+  ref           String   // estimate or invoice number
+  tokenHash     String   @unique
+  payload       String   // JSON: customer, title, lines, options, deposit, totals
+  status        String   @default("open") // open | approved | declined | paid
+  signedName    String?
+  signedAt      DateTime?
+  chosenOption  String?
+  paidAmount    Float?
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+
+  @@index([orgId, kind, ref])
+}
+
+model NotificationLog {
+  id        String   @id @default(cuid())
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id])
+  channel   String   // email | sms | whatsapp
+  event     String   // request.received | estimate.sent | appointment.reminder ...
+  recipient String
+  subject   String?
+  body      String
+  status    String   // sent | logged | failed
+  at        DateTime @default(now())
+
+  @@index([orgId, at])
+}
+
+model Automation {
+  id        String   @id @default(cuid())
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id])
+  key       String   // quote.followup | invoice.reminder | request.autoarchive | job.review
+  enabled   Boolean  @default(true)
+  afterDays Int      @default(3)
+  lastRunAt DateTime?
+
+  @@unique([orgId, key])
+}
+
+model Certification {
+  id         String   @id @default(cuid())
+  orgId      String
+  org        Organization @relation(fields: [orgId], references: [id])
+  technician String
+  name       String   // e.g. EPA 608, Electrical licence
+  serviceType String? // service type this certification qualifies for
+  expiresOn  DateTime
+
+  @@index([orgId, technician])
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id])
+  ref       String   // job reference the review is about
+  customer  String
+  rating    Int      // 1 to 5
+  comment   String?
+  at        DateTime @default(now())
+
+  @@index([orgId, at])
+}
+
+model TimeEntry {
+  id        String   @id @default(cuid())
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id])
+  userId    String
+  userName  String
+  clockIn   DateTime
+  clockOut  DateTime?
+  inLat     Float?
+  inLng     Float?
+  outLat    Float?
+  outLng    Float?
+  note      String?
+  outsideIn  Boolean @default(false) // clocked in outside the work area
+  outsideOut Boolean @default(false)
+
+  @@index([orgId, clockIn])
+  @@index([userId, clockOut])
+}

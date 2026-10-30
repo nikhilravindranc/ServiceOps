@@ -1,4 +1,5 @@
 "use client";
+import { useOpenOnNew } from "@/lib/useOpenOnNew";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import TextField from "@mui/material/TextField";
@@ -45,6 +46,7 @@ export default function CustomersPage() {
   const [statusF, setStatusF] = useState(ALL_STATUS);
   const [actF, setActF] = useState(ACTIVITY[0]);
   const [addOpen, setAddOpen] = useState(false);
+  useOpenOnNew(() => setAddOpen(true));
   const [form, setForm] = useState(EMPTY_FORM);
   const [nameErr, setNameErr] = useState("");
 

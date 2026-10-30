@@ -479,6 +479,8 @@ export interface JobWorkspace {
   /** Entries logged by user actions, appended after the derived history. */
   activity: JobActivity[];
   invoice: JobInvoice | null;
+  /** Set once the invoice has been paid (recorded in the office or through a payment link). */
+  paidOn?: number;
   /** null until the user ticks something — then it owns the checklist. */
   checklist: boolean[] | null;
 }
@@ -490,6 +492,8 @@ const DEFAULT_ATTACHMENTS: JobAttachment[] = [
 ];
 
 const WORKSPACES: Record<number, JobWorkspace> = {};
+/** Exposed so the workspace snapshot can save and restore per-job notes, photos, parts and invoices. */
+export const WORKSPACE_STORE = WORKSPACES;
 
 export function getWorkspace(id: number): JobWorkspace {
   if (!WORKSPACES[id]) {

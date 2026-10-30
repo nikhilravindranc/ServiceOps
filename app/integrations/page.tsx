@@ -16,18 +16,18 @@ const STATE_TONE: Record<State, PillTone> = { Connected: "green", "Not connected
 const STATE_ICON: Record<State, typeof CheckCircle> = { Connected: CheckCircle, "Not connected": PlugsConnected, "Configuration required": WarningCircle, Error: XCircle };
 
 interface Integration {
-  key: string; name: string; provider: string; group: string; icon: typeof Code; tone: Tone;
+  key: string; name: string; provider: string; group: string; icon: typeof Code; tone: Tone; /** Brand logo (image with the product name in it). Shown instead of the icon and name. */ logo?: string;
   state: State; summary: string; syncs: string[]; lastSync?: string; issue?: string; fields: { label: string; value: string; secret?: boolean }[];
 }
 
 const SEED: Integration[] = [
-  { key: "crm", name: "EVOQ CRM", provider: "EVOQ", group: "EVOQ suite", icon: AddressBook, tone: "amber", state: "Connected",
+  { key: "crm", name: "EVOQ CRM", provider: "EVOQ", group: "EVOQ suite", icon: AddressBook, tone: "amber", logo: "/integrations/evoq-crm.png", state: "Connected",
     summary: "Customers, contacts and sites stay in step with sales.", syncs: ["Customers ⇄", "Contacts ⇄", "Sites →"], lastSync: "Sep 24, 2024 10:05 AM",
     fields: [{ label: "Workspace", value: "northeastfs.evoq.app" }, { label: "Sync direction", value: "Two-way" }] },
-  { key: "inventory", name: "EVOQ Inventory", provider: "EVOQ", group: "EVOQ suite", icon: Package, tone: "amber", state: "Connected",
+  { key: "inventory", name: "EVOQ Inventory", provider: "EVOQ", group: "EVOQ suite", icon: Package, tone: "amber", logo: "/integrations/evoq-inventory.png", state: "Connected",
     summary: "Parts catalogue, warehouse stock and purchasing. ServiceOps shows the field view.", syncs: ["Parts →", "Stock levels → every 15 min", "Part requests ⇄", "Returns →"], lastSync: "Sep 24, 2024 10:15 AM",
     fields: [{ label: "Warehouse", value: "Newark Main (WH-01)" }, { label: "Van locations", value: "8 mapped" }] },
-  { key: "billing", name: "EVOQ Billing", provider: "EVOQ", group: "EVOQ suite", icon: Receipt, tone: "amber", state: "Configuration required",
+  { key: "billing", name: "EVOQ Billing", provider: "EVOQ", group: "EVOQ suite", icon: Receipt, tone: "amber", logo: "/integrations/evoq-billing.png", state: "Configuration required",
     summary: "Invoices, payments and credit notes for completed jobs.", syncs: ["Invoices →", "Payment status ←"], issue: "Map ServiceOps tax rate (18%) to a Billing tax code before invoices can sync.",
     fields: [{ label: "Workspace", value: "northeastfs.evoq.app" }, { label: "Tax code", value: "" }] },
   { key: "erp", name: "ERP", provider: "SAP Business One", group: "Business systems", icon: Factory, tone: "blue", state: "Not connected",
@@ -36,7 +36,7 @@ const SEED: Integration[] = [
     summary: "General ledger postings for service revenue and parts cost.", syncs: ["Journal entries →"], lastSync: "Sep 21, 2024 06:00 PM", issue: "Authorisation expired on Sep 22. Reconnect to resume postings — 7 entries are queued.",
     fields: [{ label: "Company", value: "Northeast Facility Services LLC" }] },
   { key: "maps", name: "Maps & location", provider: "Google Maps Platform", group: "Location", icon: MapTrifold, tone: "green", state: "Not connected",
-    summary: "Live technician locations, travel times and routing in Dispatch. Until connected, Dispatch shows a schematic zone map.", syncs: ["Geocoding", "Drive times", "Live locations"],
+    summary: "Live technician locations, travel times and routing in Dispatch. Until connected, Dispatch uses an OpenStreetMap view with sample locations.", syncs: ["Geocoding", "Drive times", "Live locations"],
     fields: [{ label: "API key", value: "", secret: true }] },
   { key: "email", name: "Email", provider: "Microsoft 365", group: "Communication", icon: EnvelopeSimple, tone: "purple", state: "Connected",
     summary: "Service reports, estimates and reminders sent from service@northeastfs.com.", syncs: ["Outbound email"], lastSync: "Sep 24, 2024 09:58 AM",
@@ -101,13 +101,20 @@ export default function IntegrationsPage() {
                   className="text-left rounded-2xl border border-[var(--border-soft)] bg-[var(--bg-card)] p-4 sm:p-5 flex flex-col gap-3 hover:border-[var(--serviceops-primary)] transition-colors"
                   style={{ boxShadow: CARD_SHADOW }}>
                   <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <IconTile tone={i.tone} size={44}><Icon size={22} weight="duotone" /></IconTile>
+                    {i.logo ? (
                       <div className="min-w-0">
-                        <p className="m-0 text-label font-bold text-[var(--text-primary)] truncate">{i.name}</p>
-                        <p className="m-0 text-caption text-[var(--text-muted)] truncate">{i.provider}</p>
+                        <span className="inline-block max-w-full rounded-lg [.dark_&]:bg-white [.dark_&]:px-2 [.dark_&]:py-1"><img src={i.logo} alt={i.name} className="block h-9 w-auto max-w-full" /></span>
+                        <p className="m-0 mt-1 text-caption text-[var(--text-muted)] truncate">{i.provider}</p>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="flex items-center gap-3 min-w-0">
+                        <IconTile tone={i.tone} size={44}><Icon size={22} weight="duotone" /></IconTile>
+                        <div className="min-w-0">
+                          <p className="m-0 text-label font-bold text-[var(--text-primary)] truncate">{i.name}</p>
+                          <p className="m-0 text-caption text-[var(--text-muted)] truncate">{i.provider}</p>
+                        </div>
+                      </div>
+                    )}
                     <Pill tone={STATE_TONE[i.state]}>{i.state === "Configuration required" ? "Setup needed" : i.state}</Pill>
                   </div>
                   <p className="m-0 text-body text-[var(--text-body)] flex-1">{i.summary}</p>

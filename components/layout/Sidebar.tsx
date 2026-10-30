@@ -6,9 +6,10 @@ import Avatar from "@mui/material/Avatar";
 import Tooltip from "@mui/material/Tooltip";
 import {
   SquaresFourIcon, ClipboardTextIcon, TruckIcon, WrenchIcon, BuildingsIcon, CubeIcon, PackageIcon,
-  ReceiptIcon, ChartBarIcon, UsersThreeIcon, GearSixIcon, PlugsConnectedIcon, XIcon,
+  ReceiptIcon, ChartBarIcon, TrayIcon, BooksIcon, CalendarCheckIcon, LightbulbIcon, ClockIcon, CaretDownIcon, UsersThreeIcon, GearSixIcon, PlugsConnectedIcon, XIcon,
 } from "@phosphor-icons/react";
-import { OWNER_AVATARS } from "@/lib/avatars";
+import { useSession } from "next-auth/react";
+import { useLayout } from "@/components/LayoutContext";
 import { useTheme } from "@/components/ThemeContext";
 import { WORK_ORDERS, woStatus } from "@/lib/serviceData";
 
@@ -29,6 +30,7 @@ function buildNav(): { main: NavGroup[]; admin: NavGroup } {
       {
         label: "Work",
         items: [
+          { label: "Requests",    Icon: TrayIcon,          href: "/requests" },
           { label: "Work Orders", Icon: ClipboardTextIcon, href: "/work-orders", badge: fresh || undefined },
           { label: "Dispatch",    Icon: TruckIcon,         href: "/dispatch",    badge: toSchedule || undefined },
           { label: "Jobs",        Icon: WrenchIcon,        href: "/jobs" },
@@ -40,12 +42,16 @@ function buildNav(): { main: NavGroup[]; admin: NavGroup } {
           { label: "Customers", Icon: BuildingsIcon, href: "/customers" },
           { label: "Assets",    Icon: CubeIcon,      href: "/assets" },
           { label: "Inventory", Icon: PackageIcon,   href: "/inventory" },
+          { label: "Catalog",   Icon: BooksIcon,     href: "/catalog" },
+          { label: "Plans",     Icon: CalendarCheckIcon, href: "/plans" },
         ],
       },
       {
         label: "Business",
         items: [
           { label: "Billing", Icon: ReceiptIcon,  href: "/billing" },
+          { label: "Insights", Icon: LightbulbIcon, href: "/insights" },
+          { label: "Timesheets", Icon: ClockIcon, href: "/timesheets" },
           { label: "Reports", Icon: ChartBarIcon, href: "/reports" },
         ],
       },
@@ -66,6 +72,18 @@ const isActive = (pathname: string, href: string) =>
 
 export default function Sidebar() {
   const pathname    = usePathname();
+  const { data: session } = useSession();
+  const { layout } = useLayout();
+  const compact = layout === "compact";
+  // Compact layout: menu groups can be folded; the choice is remembered on this device.
+  const [closedGroups, setClosedGroups] = useState<Record<string, boolean>>({});
+  useEffect(() => { try { setClosedGroups(JSON.parse(localStorage.getItem("nav-closed-groups") ?? "{}")); } catch { /* ignore */ } }, []);
+  const toggleGroup = (label: string) => setClosedGroups(c => {
+    const next = { ...c, [label]: !c[label] };
+    try { localStorage.setItem("nav-closed-groups", JSON.stringify(next)); } catch { /* ignore */ }
+    return next;
+  });
+  const initials = (session?.user?.name ?? "?").split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase();
   const { theme } = useTheme();
   const isDark = theme === "dark";
   const [isMobile,    setIsMobile]    = useState(false);
@@ -114,14 +132,21 @@ export default function Sidebar() {
     setDrawerOpen(false);
   };
 
-  const itemTone = (active: boolean) => isDark
-    ? (active ? "bg-[var(--serviceops-tint)] text-[var(--serviceops-primary)]" : "text-[var(--serviceops-secondary)] hover:bg-[var(--serviceops-tint)] hover:text-[var(--serviceops-primary)]")
-    : (active ? "bg-[var(--serviceops-primary-10)] text-[var(--serviceops-depth)]" : "text-[var(--serviceops-depth)] hover:bg-[var(--serviceops-secondary-10)] hover:text-[var(--serviceops-primary)]");
+  // Menu item colours. Hover keeps the text dark (or cream in dark mode) on a soft neutral wash, so it stays readable;
+  // the current page gets the amber wash and a darker amber icon.
+  const focusRing = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--serviceops-primary)]";
+  const itemTone = (active: boolean) => focusRing + " " + (isDark
+    ? (active
+        ? "bg-[rgba(251,191,36,0.16)] text-[var(--serviceops-primary)] font-semibold"
+        : "text-[var(--serviceops-secondary)] hover:bg-[rgba(255,243,214,0.09)] hover:text-[var(--serviceops-depth)]")
+    : (active
+        ? "bg-[rgba(245,158,11,0.14)] text-[var(--serviceops-depth)] font-semibold hover:bg-[rgba(245,158,11,0.20)]"
+        : "text-[#2B2B2B] hover:bg-[rgba(17,17,17,0.06)] hover:text-[#000000]"));
   const iconTone = (active: boolean) => isDark
     ? (active ? "text-[var(--serviceops-primary)]" : "text-[var(--serviceops-muted)] group-hover:text-[var(--serviceops-primary)]")
-    : (active ? "text-[var(--serviceops-primary)]" : "text-[var(--serviceops-depth)] group-hover:text-[var(--serviceops-primary)]");
+    : (active ? "text-[#C2410C]" : "text-[#4B4B4B] group-hover:text-[#C2410C]");
   const badgeCls = `text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none ${
-    isDark ? "bg-[var(--serviceops-tint)] text-[var(--serviceops-primary)]" : "bg-[var(--serviceops-primary-10)] text-[var(--serviceops-primary)]"
+    isDark ? "bg-[var(--serviceops-tint)] text-[var(--serviceops-primary)]" : "bg-[rgba(245,158,11,0.16)] text-[#B45309]"
   }`;
 
   const groupLabel = (label: string, mobile = false) => (
@@ -179,7 +204,7 @@ export default function Sidebar() {
             <button
               onClick={closeDrawer}
               className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all duration-150 flex-shrink-0 ${
-                isDark ? "text-[var(--serviceops-primary)] hover:text-[var(--serviceops-hover)] hover:bg-[var(--serviceops-tint)]" : "text-[var(--serviceops-depth)] hover:text-[var(--serviceops-primary)] hover:bg-[var(--serviceops-secondary-10)]"
+                isDark ? "text-[var(--serviceops-secondary)] hover:text-[var(--serviceops-depth)] hover:bg-[rgba(255,243,214,0.09)]" : "text-[var(--serviceops-depth)] hover:text-[#000000] hover:bg-[rgba(17,17,17,0.06)]"
               }`}
               aria-label="Close menu"
             >
@@ -208,14 +233,13 @@ export default function Sidebar() {
             <div className={`flex items-center gap-2.5 px-3 py-2 rounded-xl border ${isDark ? "bg-[var(--serviceops-tint)] border-[var(--serviceops-soft)]" : "bg-[var(--bg-card)] border-[var(--serviceops-soft)]"}`}>
               <div className="relative flex-shrink-0">
                 <Avatar
-                  src={OWNER_AVATARS["PM SDL"]}
                   sx={{ width: 30, height: 30, bgcolor: "var(--serviceops-primary)", fontSize: "0.6rem", fontWeight: 800 }}
-                >PM</Avatar>
+                >{initials}</Avatar>
                 <span className={`absolute bottom-0 right-0 w-2 h-2 rounded-full bg-emerald-400 border-2 ${isDark ? "border-[var(--serviceops-surface)]" : "border-white"}`} />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="m-0 text-[12px] font-semibold truncate text-[var(--serviceops-depth)]">PM SDL</p>
-                <p className="m-0 text-[11px] truncate text-[var(--serviceops-muted)]">Admin · dmops@socialdnalabs.com</p>
+                <p className="m-0 text-[12px] font-semibold truncate text-[var(--serviceops-depth)]">{session?.user?.name ?? "Account"}</p>
+                <p className="m-0 text-[11px] truncate text-[var(--serviceops-muted)]">{[session?.user?.role, session?.user?.email].filter(Boolean).join(" · ")}</p>
               </div>
             </div>
           </div>
@@ -263,49 +287,63 @@ export default function Sidebar() {
     );
   };
 
-  const renderGroup = (g: NavGroup, gi: number) => (
-    <div key={gi} className="space-y-0.5">
-      {g.label && (collapsed
-        ? (gi > 0 ? <div className="mx-3 my-2 border-t border-[var(--serviceops-soft)]" /> : null)
-        : groupLabel(g.label))}
-      {g.items.map(renderItem)}
-    </div>
-  );
+  const renderGroup = (g: NavGroup, gi: number) => {
+    if (compact && g.label && !collapsed) {
+      const closed = !!closedGroups[g.label];
+      // A folded group still shows the page you are on, so you never lose your place.
+      const visible = closed ? g.items.filter(i => isActive(pathname, i.href)) : g.items;
+      return (
+        <div key={gi} className="space-y-0.5">
+          <button type="button" onClick={() => toggleGroup(g.label!)} aria-expanded={!closed}
+            className="w-full flex items-center justify-between px-3 pt-3 pb-1 text-nav-group-label uppercase text-[var(--serviceops-muted)] hover:text-[var(--serviceops-depth)]">
+            <span>{g.label}</span>
+            <CaretDownIcon size={11} weight="bold" className={"transition-transform " + (closed ? "-rotate-90" : "")} />
+          </button>
+          {visible.map(renderItem)}
+        </div>
+      );
+    }
+    return (
+      <div key={gi} className="space-y-0.5">
+        {g.label && (collapsed
+          ? (gi > 0 ? <div className="mx-3 my-2 border-t border-[var(--serviceops-soft)]" /> : null)
+          : groupLabel(g.label))}
+        {g.items.map(renderItem)}
+      </div>
+    );
+  };
 
   return (
     <aside
       aria-label="Main navigation"
       className="fixed left-0 flex flex-col z-50 select-none border-r overflow-hidden border-[var(--serviceops-soft)]"
       style={{
-        top: "72px",
-        height: "calc(100vh - 72px)",
+        top: compact ? "0px" : "72px",
+        height: compact ? "100vh" : "calc(100vh - 72px)",
         backgroundColor: "var(--bg-sidebar)",
-        width: collapsed ? "68px" : "260px",
+        width: collapsed ? "68px" : compact ? "224px" : "260px",
         transition: "width 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s ease, border-color 0.2s ease",
       }}
     >
-      {/* Navigation */}
-      <nav className="flex-1 px-2 py-3 overflow-y-auto overflow-x-hidden">
-        {nav.main.map(renderGroup)}
+      {/* Navigation (Admin is the last group, so nothing is hidden behind a pinned block on short windows) */}
+      {compact && (
+        <div className="flex items-center h-[56px] flex-shrink-0 px-4 border-b border-[var(--serviceops-soft)]">
+          <img src="/logo.png" alt="ServiceOps" style={collapsed ? { height: 28, width: 32, objectFit: "cover", objectPosition: "left" } : { height: 28, width: "auto" }} />
+        </div>
+      )}
+      <nav className="flex-1 min-h-0 px-2 py-3 overflow-y-auto overflow-x-hidden">
+        {[...nav.main, nav.admin].map(renderGroup)}
       </nav>
 
-      {/* Bottom: Admin + Profile */}
-      <div className="px-2 pb-3 border-t pt-1 flex-shrink-0 border-[var(--serviceops-soft)]">
-        {collapsed ? <div className="pt-1 space-y-0.5">{nav.admin.items.map(renderItem)}</div> : (
-          <div className="space-y-0.5">
-            {groupLabel("Admin")}
-            {nav.admin.items.map(renderItem)}
-          </div>
-        )}
-
+      {/* Bottom: profile */}
+      <div className="px-2 pb-3 border-t pt-2 flex-shrink-0 border-[var(--serviceops-soft)]">
         {collapsed ? (
-          <Tooltip title="PM SDL — Admin" placement="right" arrow>
+          <Tooltip title={`${session?.user?.name ?? "Account"} — ${session?.user?.role ?? ""}`} placement="right" arrow>
             <span className="flex justify-center py-1 mt-1">
               <div className="relative">
                 <Avatar
-                  src={OWNER_AVATARS["PM SDL"]}
                   sx={{ width: 34, height: 34, bgcolor: "var(--serviceops-primary)", fontSize: "0.6rem", fontWeight: 800, cursor: "pointer" }}
-                >PM</Avatar>
+                >{initials}</Avatar>
                 <span className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 ${isDark ? "border-[var(--serviceops-surface)]" : "border-white"}`} />
               </div>
             </span>
@@ -314,14 +352,13 @@ export default function Sidebar() {
           <div className={`flex items-center gap-2.5 mt-2 px-3 py-2 rounded-lg border ${isDark ? "bg-[var(--serviceops-tint)] border-[var(--serviceops-soft)]" : "bg-[var(--bg-card)] border-[var(--serviceops-soft)]"}`}>
             <div className="relative flex-shrink-0">
               <Avatar
-                src={OWNER_AVATARS["PM SDL"]}
                 sx={{ width: 30, height: 30, bgcolor: "var(--serviceops-primary)", fontSize: "0.6rem", fontWeight: 800 }}
-              >PM</Avatar>
+              >{initials}</Avatar>
               <span className={`absolute bottom-0 right-0 w-2 h-2 rounded-full bg-emerald-400 border-2 ${isDark ? "border-[var(--serviceops-surface)]" : "border-white"}`} />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="m-0 text-[12px] font-semibold truncate text-[var(--serviceops-depth)]">PM SDL</p>
-              <p className="m-0 text-[10px] truncate text-[var(--serviceops-muted)]">Admin · dmops@socialdnalabs.com</p>
+              <p className="m-0 text-[12px] font-semibold truncate text-[var(--serviceops-depth)]">{session?.user?.name ?? "Account"}</p>
+              <p className="m-0 text-[10px] truncate text-[var(--serviceops-muted)]">{[session?.user?.role, session?.user?.email].filter(Boolean).join(" · ")}</p>
             </div>
           </div>
         )}

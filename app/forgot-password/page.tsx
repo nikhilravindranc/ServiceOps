@@ -9,12 +9,17 @@ export default function ForgotPasswordPage() {
   const [focus,     setFocus]     = useState(false);
   const [loading,   setLoading]   = useState(false);
   const [sent,      setSent]      = useState(false);
+  const [error,     setError]     = useState("");
+  const [resetLink, setResetLink] = useState<string | undefined>();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    await new Promise(r => setTimeout(r, 800));
+    const res = await fetch("/api/account/forgot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
+    const data = await res.json().catch(() => ({}));
     setLoading(false);
+    if (!res.ok) { setError(data.error ?? "Something went wrong. Try again."); return; }
+    setResetLink(data.devLink);
     setSent(true);
   };
 
@@ -44,7 +49,7 @@ export default function ForgotPasswordPage() {
         <div className="px-8 py-8">
           {/* Logo */}
           <div className="flex justify-center mb-6">
-            <img src="/logo.png" alt="EVOQ CRM" style={{ height: "26px", width: "auto" }} />
+            <img src="/logo.png" alt="ServiceOps" style={{ height: "26px", width: "auto" }} />
           </div>
 
           {!sent ? (
@@ -64,6 +69,7 @@ export default function ForgotPasswordPage() {
                 </p>
               </div>
 
+              {error && <p className="mb-3 px-3 py-2 rounded-xl text-[12.5px] font-medium text-red-700" style={{ background: "#FEF2F2", border: "1px solid #FECACA" }}>{error}</p>}
               <form onSubmit={handleSubmit} className="space-y-4">
                 {/* Email field */}
                 <div className="relative">
@@ -128,9 +134,14 @@ export default function ForgotPasswordPage() {
               </div>
               <h2 className="text-[19px] font-extrabold text-slate-900 mb-2">Check your email</h2>
               <p className="text-slate-400 text-[13px] font-medium leading-relaxed mb-1">
-                We sent a reset link to
+                If this email has an account, we sent a reset link to
               </p>
               <p className="text-[#1D4ED8] font-bold text-[13.5px] mb-6">{email}</p>
+              {resetLink && (
+                <a href={resetLink} className="block mb-4 text-[12.5px] font-bold text-[#1D4ED8] underline">
+                  Email is not configured on this server. Open the reset link here.
+                </a>
+              )}
               <div className="px-4 py-3 rounded-xl text-[12px] text-slate-500 font-medium mb-6"
                 style={{ background: "#F8FBFF", border: "1px solid #E3ECFC" }}>
                 Didn&apos;t receive it? Check your spam folder or{" "}
