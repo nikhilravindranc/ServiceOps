@@ -23,7 +23,7 @@ import { useJobFieldSx } from "@/components/jobs/jobFormStyles";
 import { matchesQuery } from "@/lib/filtering";
 import { ALL_JOBS, TECHNICIANS } from "@/lib/jobsData";
 import {
-  PARTS, PART_REQUESTS, PART_RETURNS, TECH_PROFILES, SERVICE_PRICING, available, techStockTotal, partDemand, partUsed30,
+  PARTS, PART_REQUESTS, PART_RETURNS, TECH_PROFILES, SERVICE_PRICING, available, techStockTotal, vanStock, partDemand, partUsed30,
   stockState, workOrderById, fmtDate, fmtDay, money, JOBS_TODAY_TS, DAY_MS, datasetNow,
   type Part, type PartRequestStatus, type ReturnStatus,
 } from "@/lib/serviceData";
@@ -102,11 +102,11 @@ export default function InventoryView() {
     upcoming.forEach(j => SERVICE_PRICING[j.serviceType].parts.forEach(l => need.set(l.item, (need.get(l.item) ?? 0) + l.qty)));
     const gaps = Array.from(need.entries()).map(([item, qty]) => {
       const p = PARTS.find(x => x.name === item);
-      const carried = p?.techStock[t.name] ?? 0;
+      const carried = p ? vanStock(p, t.name) : 0;
       return { item, partNo: p?.partNo ?? "", need: qty, carried, short: Math.max(0, qty - carried) };
     }).filter(g => g.short > 0);
-    const skus = PARTS.filter(p => (p.techStock[t.name] ?? 0) > 0);
-    return { t, upcoming: upcoming.length, skus: skus.length, units: skus.reduce((s, p) => s + (p.techStock[t.name] ?? 0), 0), gaps };
+    const skus = PARTS.filter(p => vanStock(p, t.name) > 0);
+    return { t, upcoming: upcoming.length, skus: skus.length, units: skus.reduce((s, p) => s + vanStock(p, t.name), 0), gaps };
   }), [version]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const restockVan = (name: string, gaps: { partNo: string; short: number }[]) => {
@@ -287,7 +287,7 @@ export default function InventoryView() {
         ) : undefined}>
         {openPart && (() => {
           const st = stockState(openPart);
-          const vansWith = Object.entries(openPart.techStock).filter(([, q]) => q > 0);
+          const vansWith = Object.keys(openPart.techStock).map((t): [string, number] => [t, vanStock(openPart, t)]).filter(([, q]) => q > 0);
           return (
             <>
               <div className="flex items-center gap-2"><Pill tone={STOCK_TONE[st]}>{st}</Pill><span className="text-caption text-[var(--text-muted)]">Unit cost {money(openPart.unitCost)} per {openPart.unit}</span></div>

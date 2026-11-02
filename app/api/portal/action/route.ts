@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { getPortalSession, loadSnapshot } from "@/lib/portalAuth";
+import { getPortalSession, loadSnapshot, portalInvoice } from "@/lib/portalAuth";
 import { newToken, sha256 } from "@/lib/tokens";
 import { appUrl } from "@/lib/mail";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
@@ -42,8 +42,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ url: `${appUrl()}/approve/${token}` });
   }
   const inv = (snap.historicInvoices ?? []).find(x => x.number === d.ref && x.customer === customer.name);
-  if (!inv || inv.amount - inv.paid <= 0) return NextResponse.json({ error: "Nothing is due on this invoice." }, { status: 404 });
+  if (!inv || portalInvoice(snap, inv).due <= 0) return NextResponse.json({ error: "Nothing is due on this invoice." }, { status: 404 });
   await db.publicLink.updateMany({ where: { orgId: org.id, kind: "invoice", ref: inv.number, status: "open" }, data: { expiresAt: new Date() } });
-  await db.publicLink.create({ data: { ...common, kind: "invoice", ref: inv.number, payload: JSON.stringify({ customer: customer.name, title: `Invoice ${inv.number}`, amount: inv.amount - inv.paid, taxPct: 0, lines: [], company: org.name }) } });
+  await db.publicLink.create({ data: { ...common, kind: "invoice", ref: inv.number, payload: JSON.stringify({ customer: customer.name, title: `Invoice ${inv.number}`, taxPct: 0, lines: [], company: org.name }) } });
   return NextResponse.json({ url: `${appUrl()}/pay/${token}` });
 }

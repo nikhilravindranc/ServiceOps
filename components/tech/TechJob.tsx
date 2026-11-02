@@ -1,17 +1,21 @@
 "use client";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { MapPin, Phone, Camera, Trash, Plus, Minus, CheckCircle, Circle, ListChecks, Package, NotePencil, Signature, CreditCard, FileText, BookOpen, Timer, WarningCircle, Receipt, Printer } from "@phosphor-icons/react";
+import { MapPin, Phone, Camera, Trash, Plus, Minus, CheckCircle, Circle, ListChecks, Package, NotePencil, CreditCard, FileText, BookOpen, Timer, WarningCircle, Receipt, Printer } from "@phosphor-icons/react";
 import {
-  getWorkspace, setJobCheck, setJobSignature, addJobPhotos, removeJobPhoto, addJobNote, addJobPart, removeJobPart, recordJobPayment,
+  getWorkspace, setJobCheck, addJobPhotos, removeJobPhoto, addJobNote, addJobPart, removeJobPart, recordJobPayment,
   generateInvoice, JOB_EXTRAS, STATUS_META, ALL_JOBS,
 } from "@/lib/jobsData";
-import { PARTS, SERVICE_PRICING, customerByName, invoiceReadiness, jobCharges, money, workOrderForJob } from "@/lib/serviceData";
+import { PARTS, SERVICE_PRICING, customerByName, invoiceReadiness, jobCharges, money, vanStock, workOrderForJob } from "@/lib/serviceData";
 import { checklistFor, SOPS } from "@/lib/checklists";
-import { advanceJob, completionProblems, STEP_LABEL, techStep } from "@/lib/techFlow";
+import { advanceJob, completionProblems, isStopped, NEXT_STEPS_TEXT, openPartRequest, requestPartForJob, STEP_LABEL, techStep, vanCheck } from "@/lib/techFlow";
+import { useJobIssues } from "@/lib/jobSync";
 import { resizePhoto } from "@/lib/photoResize";
 import TechShell from "./TechShell";
-import SignaturePad from "./SignaturePad";
+import SignOffCard from "./SignOffCard";
+import FieldActions from "./FieldActions";
+import JobIssueNotice from "./JobIssueNotice";
 import LocationShareToggle from "./LocationShareToggle";
 import ServiceReportSheet from "./ServiceReportSheet";
 
@@ -43,22 +47,21 @@ export default function TechJob({ id }: { id: number }) {
   const photoInput = useRef<HTMLInputElement>(null);
   const [now, setNow] = useState(Date.now());
   const [openSop, setOpenSop] = useState<string | null>(null);
-  const [sigName, setSigName] = useState("");
-  const [sigData, setSigData] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [partName, setPartName] = useState("");
   const [partQty, setPartQty] = useState(1);
   const [payMethod, setPayMethod] = useState("Cash");
   const [payRef, setPayRef] = useState("");
   const [problems, setProblems] = useState<string[] | null>(null);
+  const issue = useJobIssues().find(i => i.jobId === id); // the office took this job away (see lib/jobSync.ts)
 
   const ws = job ? getWorkspace(job.id) : null;
   useEffect(() => { if (!ws?.workStartedAt || ws.workEndedAt) return; const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, [ws?.workStartedAt, ws?.workEndedAt]);
 
-  if (!job || !ws) return <TechShell title="Job not found" back="/tech"><p className="text-body text-[var(--text-muted)]">This job does not exist.</p></TechShell>;
+  if (!job || !ws) return <TechShell title={issue ? "Job removed" : "Job not found"} back="/tech">{issue ? <JobIssueNotice issue={issue} /> : <p className="text-body text-[var(--text-muted)]">This job does not exist.</p>}</TechShell>;
   const role = session?.user?.role ?? "";
   if (session && job.technician !== session.user?.name && !OFFICE_ROLES.includes(role)) {
-    return <TechShell title="Not your job" back="/tech"><p className="text-body text-[var(--text-muted)]">{job.jobId} is assigned to {job.technician}.</p></TechShell>;
+    return <TechShell title="Job reassigned" back="/tech"><JobIssueNotice issue={issue} fallback={`${job.jobId} is assigned to ${job.technician}, not you.`} /></TechShell>;
   }
 
   const cust = customerByName(job.customer);
@@ -75,9 +78,22 @@ export default function TechJob({ id }: { id: number }) {
   const completed = step === "done";
   const meta = STATUS_META[job.status];
   const elapsed = ws.workStartedAt ? (ws.workEndedAt ?? now) - ws.workStartedAt : 0;
-  const stock = PARTS.map(p => ({ p, van: p.techStock[job.technician] ?? 0 })).sort((a, b) => Number(b.p.category === job.serviceType) - Number(a.p.category === job.serviceType));
+  const stock = PARTS.map(p => ({ p, van: vanStock(p, job.technician) })).sort((a, b) => Number(b.p.category === job.serviceType) - Number(a.p.category === job.serviceType));
+
+  const stopped = isStopped(ws);
+  const closed = step === "incomplete" || step === "cancelled"; // no more work on this visit
+  const chosen = PARTS.find(p => p.name === partName);
+  const chosenVan = chosen ? vanStock(chosen, job.technician) : 0;
+  const van = vanCheck(chosenVan, partQty);
+  const asked = chosen ? openPartRequest(job.id, chosen.partNo) : undefined;
+  const requestPart = () => { if (!chosen) return; const r = requestPartForJob(job, chosen, Math.max(1, van.short || partQty)); refresh(); say(`${r.id}: the warehouse has been asked for ${chosen.name}`); };
+  const retryAlert = async () => {
+    const res = await fetch("/api/notifications", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event: "unsafe", jobId: job.id, note: ws.safety?.note ?? "" }) }).catch(() => null);
+    if (res?.ok && ws.safety) { ws.safety.notified = true; refresh(); say("The office has been alerted"); } else say("Still no connection. Call dispatch.");
+  };
 
   const act = () => {
+    if (stopped) { say("Work is stopped until a manager clears the safety flag"); return; }
     if (step === "complete" && blockers.length) { setProblems(blockers); return; }
     const m = advanceJob(job); refresh(); if (m) say(m);
   };
@@ -88,13 +104,10 @@ export default function TechJob({ id }: { id: number }) {
     if (out.length) { addJobPhotos(job.id, out); refresh(); say(`${out.length} photo${out.length > 1 ? "s" : ""} added`); }
   };
   const addPart = () => {
-    const entry = PARTS.find(p => p.name === partName); if (!entry || partQty < 1) return;
-    addJobPart(job.id, { item: entry.name, qty: partQty, rate: partRate(job.serviceType, entry.name, entry.unitCost) });
+    const entry = PARTS.find(p => p.name === partName); if (!entry || !vanCheck(vanStock(entry, job.technician), partQty).ok) return;
+    // Taken from the van: van stock is worked out from the parts on jobs, so removing the part puts it back.
+    addJobPart(job.id, { item: entry.name, qty: partQty, rate: partRate(job.serviceType, entry.name, entry.unitCost), partNo: entry.partNo, fromVan: partQty });
     setPartName(""); setPartQty(1); refresh();
-  };
-  const saveSignature = () => {
-    if (!sigData || sigName.trim().length < 2) { say("Enter the customer's name and sign"); return; }
-    setJobSignature(job.id, sigName, sigData); setSigData(null); refresh();
   };
   const takePayment = () => {
     if (payMethod !== "Cash" && payMethod !== "Pay later" && payRef.trim().length < 3) { say("Add the receipt or cheque reference"); return; }
@@ -107,10 +120,12 @@ export default function TechJob({ id }: { id: number }) {
     const inv = generateInvoice(job.id); refresh(); say(`${inv.number} drafted for the office`);
   };
 
-  const footer = !completed ? (
+  const footer = closed ? (
+    <Link href="/tech" className="h-14 w-full rounded-xl text-[17px] font-bold text-[#3B1F00] bg-[var(--serviceops-primary)] flex items-center justify-center">Back to my jobs</Link>
+  ) : !completed ? (
     <div className="flex flex-col gap-1.5">
       {step === "complete" && blockers.length > 0 && <p className="m-0 flex items-center gap-1.5 text-caption text-[#B45309]"><WarningCircle size={14} />{blockers.join(" · ")}</p>}
-      <button type="button" onClick={act} className="h-14 w-full rounded-xl text-[17px] font-bold text-[#3B1F00] bg-[var(--serviceops-primary)]">{STEP_LABEL[step]}</button>
+      <button type="button" onClick={act} disabled={stopped} className="h-14 disabled:opacity-50 w-full rounded-xl text-[17px] font-bold text-[#3B1F00] bg-[var(--serviceops-primary)]">{STEP_LABEL[step]}</button>
     </div>
   ) : (
     <button type="button" onClick={() => window.print()} className="h-14 w-full rounded-xl text-[17px] font-bold text-[#3B1F00] bg-[var(--serviceops-primary)] flex items-center justify-center gap-2"><Printer size={20} />Print or save service report</button>
@@ -119,6 +134,24 @@ export default function TechJob({ id }: { id: number }) {
   return (
     <TechShell title={job.customer} subtitle={`${job.jobId} · ${job.status}`} back="/tech" footer={footer}>
       {toast && <div role="status" className="rounded-xl px-4 py-3 text-body font-semibold bg-[#111] text-white">{toast}</div>}
+      {(issue || step === "cancelled") && <JobIssueNotice issue={issue} fallback={`${job.jobId} was cancelled by the office.`} />}
+      {stopped && ws.safety && (
+        <section role="alert" className="rounded-2xl border border-red-300 bg-[rgba(239,68,68,0.10)] p-4 flex flex-col gap-1.5" data-testid="stop-work">
+          <p className="m-0 text-[16px] font-bold text-red-700">Work stopped: unsafe condition</p>
+          <p className="m-0 text-body text-[var(--text-body)]">{ws.safety.note}</p>
+          <p className="m-0 text-body text-[var(--text-body)]">Your timer is stopped. A manager has to clear this before you can continue or complete the job.</p>
+          {ws.safety.notified ? <p className="m-0 text-caption text-[var(--text-muted)]">The office has been alerted.</p>
+            : <div className="flex items-center gap-2"><p className="m-0 flex-1 text-caption text-red-700">The office has not been alerted yet.</p><button type="button" onClick={retryAlert} className={btnCls}>Try again</button></div>}
+        </section>
+      )}
+      {step === "incomplete" && ws.outcome && (
+        <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 flex flex-col gap-1.5" data-testid="visit-outcome">
+          <p className="m-0 text-[16px] font-bold text-[var(--text-primary)]">Visit not finished: {ws.outcome.reason}</p>
+          {ws.outcome.note && <p className="m-0 text-body text-[var(--text-body)]">{ws.outcome.note}</p>}
+          <p className="m-0 text-body text-[var(--text-body)]"><b>What happens next:</b> {NEXT_STEPS_TEXT[ws.outcome.reason]}</p>
+          <p className="m-0 text-caption text-[var(--text-muted)]">Your timer and location sharing are stopped. You do not need to do anything else for this job.{ws.outcome.followUp ? ` Office decision: ${ws.outcome.followUp.action}.` : ""}</p>
+        </section>
+      )}
 
       <section className="rounded-2xl border border-[var(--border-soft)] bg-[var(--bg-card)] p-4 flex flex-col gap-3">
         <div className="flex items-center justify-between gap-2">
@@ -132,10 +165,12 @@ export default function TechJob({ id }: { id: number }) {
           {cust?.phone ? <a href={`tel:${cust.phone}`} className="flex items-center justify-center gap-2 h-11 rounded-xl border border-[var(--border)] text-label font-semibold text-[var(--text-primary)]"><Phone size={18} />Call</a> : <span />}
         </div>
         <p className="m-0 text-caption text-[var(--text-muted)]">{address}{cust?.accessNotes ? ` · Access: ${cust.accessNotes}` : ""}</p>
-        {(step === "complete" || completed) && ws.workStartedAt && (
-          <p className="m-0 flex items-center gap-2 text-label font-bold text-[var(--text-primary)]"><Timer size={20} className="text-blue-600" />{clock(elapsed)} on site{completed ? " (finished)" : ""}</p>
+        {(step === "complete" || completed || closed || stopped) && ws.workStartedAt && (
+          <p className="m-0 flex items-center gap-2 text-label font-bold text-[var(--text-primary)]"><Timer size={20} className="text-blue-600" />{clock(elapsed)} on site{completed ? " (finished)" : ws.workEndedAt ? " (stopped)" : ""}</p>
         )}
       </section>
+
+      {!completed && !closed && <FieldActions job={job} name={session?.user?.name ?? job.technician} onChange={m => { refresh(); if (m) say(m); }} />}
 
       {!completed && <LocationShareToggle jobId={job.id} active={job.status === "En route" || job.status === "On site"} />}
 
@@ -185,12 +220,12 @@ export default function TechJob({ id }: { id: number }) {
             const extraIndex = i - SERVICE_PRICING[job.serviceType].parts.length;
             return (
               <li key={`${p.item}-${i}`} className="flex items-center gap-3 py-2 border-b border-[var(--border-soft)] last:border-b-0">
-                <span className="flex-1 text-body text-[var(--text-primary)]">{p.item}</span><span className="text-body text-[var(--text-muted)]">× {p.qty}</span>
+                <span className="flex-1 text-body text-[var(--text-primary)]">{p.item}{ws.extraParts[extraIndex]?.fromVan ? <span className="block text-caption text-[var(--text-muted)]">From your van</span> : null}</span><span className="text-body text-[var(--text-muted)]">× {p.qty}</span>
                 {extraIndex >= 0 && !completed && <button type="button" aria-label={`Remove ${p.item}`} onClick={() => { removeJobPart(job.id, extraIndex); refresh(); }} className="text-[var(--text-muted)]"><Trash size={18} /></button>}
               </li>);
           })}
         </ul>
-        {!completed && (
+        {!completed && !closed && (
           <div className="mt-3 flex flex-col gap-2">
             <select aria-label="Part" value={partName} onChange={e => setPartName(e.target.value)} className={inputCls}>
               <option value="">Choose a part…</option>
@@ -200,8 +235,15 @@ export default function TechJob({ id }: { id: number }) {
               <button type="button" aria-label="Fewer" onClick={() => setPartQty(q => Math.max(1, q - 1))} className="w-11 h-11 rounded-xl border border-[var(--border)] flex items-center justify-center"><Minus size={18} /></button>
               <span className="w-10 text-center text-label font-bold">{partQty}</span>
               <button type="button" aria-label="More" onClick={() => setPartQty(q => q + 1)} className="w-11 h-11 rounded-xl border border-[var(--border)] flex items-center justify-center"><Plus size={18} /></button>
-              <button type="button" onClick={addPart} disabled={!partName} className={`${btnCls} flex-1`}>Add part</button>
+              <button type="button" onClick={addPart} disabled={!partName || !van.ok} className={`${btnCls} flex-1`}>Add part</button>
             </div>
+            {chosen && !van.ok && (
+              <div role="status" className="rounded-xl bg-[rgba(245,158,11,0.12)] p-3 flex flex-col gap-2" data-testid="not-in-van">
+                <p className="m-0 text-body font-semibold text-[var(--text-primary)]">{chosenVan === 0 ? "Not in your van" : `Only ${chosenVan} in your van, you need ${partQty}`}</p>
+                {asked ? <p className="m-0 text-caption text-[var(--text-muted)]">Already requested ({asked.id}, {asked.status}). The warehouse will bring it.</p>
+                  : <button type="button" onClick={requestPart} className={btnCls}>Request this part{van.short > 1 ? ` (${van.short})` : ""}</button>}
+              </div>
+            )}
           </div>
         )}
       </Card>
@@ -216,21 +258,7 @@ export default function TechJob({ id }: { id: number }) {
         )}
       </Card>
 
-      <Card icon={Signature} title="Customer sign-off" badge={ws.signature ? <span className="text-caption font-bold text-green-700">Signed</span> : undefined}>
-        {ws.signature ? (
-          <div className="flex flex-col gap-2">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={ws.signature.dataUrl} alt="Customer signature" className="h-24 object-contain self-start rounded-lg border border-[var(--border-soft)] bg-white" />
-            <p className="m-0 text-body text-[var(--text-primary)]">{ws.signature.name} · {ws.signature.at}</p>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2.5">
-            <input aria-label="Customer name" value={sigName} onChange={e => setSigName(e.target.value)} placeholder="Customer's full name" className={inputCls} />
-            <SignaturePad onChange={setSigData} />
-            <button type="button" onClick={saveSignature} disabled={!sigData || sigName.trim().length < 2} className={btnCls}>Save signature</button>
-          </div>
-        )}
-      </Card>
+      <SignOffCard job={job} ws={ws} locked={completed || closed} by={session?.user?.name ?? job.technician} onChange={refresh} say={say} />
 
       {completed && (
         <>

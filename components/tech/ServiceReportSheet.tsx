@@ -1,9 +1,19 @@
 "use client";
 import type { JobRecord, JobWorkspace } from "@/lib/jobsData";
 import { checklistFor } from "@/lib/checklists";
+import { effectiveSignOff, signOffSummary } from "@/lib/techFlow";
 import { customerByName, fmtDate, fmtTime, money, workOrderForJob, jobCharges } from "@/lib/serviceData";
 
 const label = { fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "#777", marginBottom: 4 } as const;
+
+/** The line under the signature box: who signed and in what capacity, or why there is no signature. */
+function signLine(ws: JobWorkspace): string {
+  const s = effectiveSignOff(ws);
+  if (!s) return "Not signed off";
+  if (s.kind === "customer") return `Customer: ${s.name ?? ws.signature?.name ?? ""}${ws.signature ? ` · ${ws.signature.at}` : ""}`;
+  if (s.kind === "other") return `${s.name} (${s.role}), signing for the customer${ws.signature ? ` · ${ws.signature.at}` : ""}`;
+  return s.kind === "refused" ? "No signature: customer refused" : "No signature: nobody on site";
+}
 
 /** Printable service report: what was found, done and used, with the customer's sign-off. Print it, or save it as PDF from the print dialog. */
 export default function ServiceReportSheet({ job, ws, problem }: { job: JobRecord; ws: JobWorkspace; problem: string }) {
@@ -65,10 +75,16 @@ export default function ServiceReportSheet({ job, ws, problem }: { job: JobRecor
 
       {ws.payment && <p style={{ margin: "10px 0 0" }}>Payment: {money(ws.payment.amount)} by {ws.payment.method}{ws.payment.reference ? ` (ref ${ws.payment.reference})` : ""}.</p>}
 
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 28 }}>
+      <div style={{ marginTop: 22, padding: "8px 10px", border: "1px solid #111" }}>
+        <div style={label}>Sign-off</div>
+        <div style={{ fontWeight: 700 }} data-testid="report-signoff">{signOffSummary(ws)}</div>
+        {ws.outcome && <div>Visit not finished: {ws.outcome.reason}{ws.outcome.note ? `. ${ws.outcome.note}` : ""}</div>}
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}>
         <div style={{ width: 240 }}>
-          {ws.signature ? /* eslint-disable-next-line @next/next/no-img-element */ <img src={ws.signature.dataUrl} alt="Customer signature" style={{ height: 60, display: "block" }} /> : <div style={{ height: 60 }} />}
-          <div style={{ borderTop: "1px solid #111", paddingTop: 4, fontSize: 11 }}>Customer: {ws.signature?.name ?? "not signed"}{ws.signature ? ` · ${ws.signature.at}` : ""}</div>
+          {ws.signature ? /* eslint-disable-next-line @next/next/no-img-element */ <img src={ws.signature.dataUrl} alt="Signature" style={{ height: 60, display: "block" }} /> : <div style={{ height: 60 }} />}
+          <div style={{ borderTop: "1px solid #111", paddingTop: 4, fontSize: 11 }}>{signLine(ws)}</div>
         </div>
         <div style={{ width: 200, alignSelf: "flex-end" }}><div style={{ borderTop: "1px solid #111", paddingTop: 4, fontSize: 11, textAlign: "right" }}>Technician: {job.technician}</div></div>
       </div>

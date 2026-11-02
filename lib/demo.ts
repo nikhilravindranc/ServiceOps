@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-/** The role switcher is for demos and development only. Set DEMO_MODE=1 to turn it on elsewhere. */
-export const demoMode = () => process.env.DEMO_MODE === "1" || !!process.env.VERCEL || process.env.NODE_ENV !== "production";
+/** The role switcher is for demos and development only. It is on in development, in the demo build (see scripts/prepare-demo.mjs), or with DEMO_MODE=1; a real production deploy leaves it off. */
+export const demoMode = () => process.env.DEMO_MODE === "1" || process.env.NODE_ENV !== "production";
 
 /** One sample person per role (the administrator is whoever the seed script created). */
 export const DEMO_TEAM = [

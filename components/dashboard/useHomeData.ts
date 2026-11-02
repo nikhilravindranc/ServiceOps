@@ -1,9 +1,10 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
-import { ALL_JOBS } from "@/lib/jobsData";
+import { ALL_JOBS, getWorkspace } from "@/lib/jobsData";
+import { needsFollowUp } from "@/lib/followUp";
 import {
-  JOBS_TODAY_TS, DAY_MS, WORK_ORDERS, ESTIMATES, jobsOnDay, dispatchAlerts, woStatus, estimateTotal, allInvoices, outstanding,
+  JOBS_TODAY_TS, DAY_MS, WORK_ORDERS, ESTIMATES, jobsOnDay, dispatchAlerts, woStatus, estimateTotal, invoiceSummary,
   billingStateForJob, jobCharges, techAvailability, TECH_PROFILES, money,
 } from "@/lib/serviceData";
 import { dueVisits } from "@/lib/recurring";
@@ -30,9 +31,9 @@ export function useHomeData() {
   }, [sees.office]);
 
   const d = useMemo(() => {
-    const invoices = allInvoices();
-    const overdue = invoices.filter(i => i.status === "Overdue");
-    const overdueSum = overdue.reduce((s, i) => s + outstanding(i), 0);
+    const totals = invoiceSummary();
+    const overdue = totals.overdueList;
+    const overdueSum = totals.overdue;
     const waiting = ESTIMATES.filter(e => e.status === "Sent");
     const waitingSum = waiting.reduce((s, e) => s + estimateTotal(e), 0);
     const staleDays = (e: (typeof waiting)[number]) => Math.floor(((e.sentAt ? Date.now() : JOBS_TODAY_TS) - (e.sentAt ?? e.issuedOn)) / DAY_MS);
@@ -44,11 +45,16 @@ export function useHomeData() {
     const maintenance = dueVisits(30).filter(v => !v.existing).length;
     const alerts = dispatchAlerts(JOBS_TODAY_TS, 4);
     const open = WORK_ORDERS.filter(w => !["Completed", "Cancelled"].includes(woStatus(w))).length;
-    const collected = invoices.reduce((s, i) => s + i.paid, 0);
+    const collected = totals.collected;
     const techsFree = TECH_PROFILES.filter(t => ["Available", "On job"].includes(techAvailability(t.name, JOBS_TODAY_TS))).length;
 
     const items: Item[] = [];
     if (sees.office) {
+      // Field exceptions come first: an unsafe site, then visits that could not be finished.
+      ALL_JOBS.filter(j => { const f = getWorkspace(j.id).safety; return f && !f.clearedAt; }).forEach(j =>
+        items.push({ level: "red", title: `Stop work: ${j.jobId} · ${j.customer}`, detail: `${getWorkspace(j.id).safety!.by} reported an unsafe condition: ${getWorkspace(j.id).safety!.note}`, href: `/jobs/${j.id}`, cta: "Review" }));
+      const followUps = needsFollowUp();
+      if (followUps.length) items.push({ level: "amber", title: `${plural(followUps.length, "visit")} could not be finished`, detail: "Decide whether to rebook, charge a call-out fee or cancel", href: ["Administrator", "Service manager", "Dispatcher"].includes(role) ? "/dispatch?followup=1" : "/jobs", cta: "Decide" });
       alerts.slice(0, 4).forEach(a => items.push({ level: a.tone, title: `${a.job.jobId} · ${a.job.customer}`, detail: a.reason, href: `/jobs/${a.job.id}`, cta: "Open job" }));
       if (alerts.length > 4) items.push({ level: "amber", title: `${alerts.length - 4} more jobs need attention`, detail: "See them all in Dispatch", href: "/dispatch", cta: "Dispatch" });
       if (toSchedule) items.push({ level: "amber", title: `${plural(toSchedule, "work order")} ready to schedule`, detail: "Approved and waiting for a technician and a time", href: "/dispatch", cta: "Schedule" });

@@ -8,5 +8,5 @@ declare module "next-auth" {
   interface User { orgId?: string; role?: string; onboarded?: boolean }
 }
 declare module "next-auth/jwt" {
-  interface JWT { id?: string; orgId?: string; role?: string; onboarded?: boolean }
+  interface JWT { id?: string; orgId?: string; role?: string; onboarded?: boolean; checkedAt?: number }
 }

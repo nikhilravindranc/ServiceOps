@@ -20,6 +20,8 @@ import { CARD_SHADOW } from "@/components/dashboard/DashboardSection";
 import { JobStatusPill } from "@/components/workorders/woShared";
 import dynamic from "next/dynamic";
 import { loadCerts, certProblem } from "@/lib/certStore";
+import FollowUpList from "@/components/dispatch/FollowUpList";
+import { needsFollowUp } from "@/lib/followUp";
 
 // Leaflet touches window, so the map loads in the browser only.
 const DispatchMap = dynamic(() => import("@/components/dispatch/DispatchMap"), { ssr: false, loading: () => <div className="flex-1 flex items-center justify-center text-[13px] text-[var(--text-muted)]">Loading map…</div> });
@@ -72,7 +74,7 @@ export default function DispatchConsole() {
   const [day, setDay] = useState(startOfDay(JOBS_TODAY_TS));
   const [view, setView] = useState<"timeline" | "map">("timeline");
   const [showLoad, setShowLoad] = useState(false);
-  const [queueTab, setQueueTab] = useState<"queue" | "attention">("queue");
+  const [queueTab, setQueueTab] = useState<"queue" | "attention" | "followup">("queue");
   const [zoneF, setZoneF] = useState("All zones");
   const [sel, setSel] = useState<Sel>(null);
   const [mobilePane, setMobilePane] = useState<"queue" | "schedule">("schedule");
@@ -84,6 +86,7 @@ export default function DispatchConsole() {
 
   // Deep link from a work order ("Schedule in Dispatch").
   useEffect(() => {
+    if (params.get("followup")) { setQueueTab("followup"); setMobilePane("queue"); } // from the Home attention item
     const id = Number(params.get("wo"));
     const wo = id ? workOrderById(id) : undefined;
     if (wo) {
@@ -102,6 +105,7 @@ export default function DispatchConsole() {
   [version, zoneF]); // eslint-disable-line react-hooks/exhaustive-deps
   const notReady = useMemo(() => WORK_ORDERS.filter(w => ["New", "Awaiting approval"].includes(woStatus(w))).length, [version]);
   const alerts = useMemo(() => dispatchAlerts(JOBS_TODAY_TS).filter(a => zoneOk(a.job.region)), [version, zoneF]); // eslint-disable-line react-hooks/exhaustive-deps
+  const followUps = useMemo(() => needsFollowUp(), [version]); // eslint-disable-line react-hooks/exhaustive-deps
   const dayJobs = useMemo(() => jobsOnDay(day), [day, version]);
   const techs = useMemo(() => TECH_PROFILES.filter(t => zoneOk(t.zone) || dayJobs.some(j => j.technician === t.name && zoneOk(j.region))), [zoneF, dayJobs]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -253,11 +257,11 @@ Your service visit (${jobName}) is booked for ${when}. A technician will arrive 
 
   // ── Queue panel ──
   const queuePanel = (
-    <Panel className="lg:h-full" title={queueTab === "queue" ? "To schedule" : "Needs attention"}
-      right={<span className="text-caption text-[var(--text-muted)]">{queueTab === "queue" ? queue.length : alerts.length}</span>}>
+    <Panel className="lg:h-full" title={queueTab === "queue" ? "To schedule" : queueTab === "followup" ? "Needs follow-up" : "Needs attention"}
+      right={<span className="text-caption text-[var(--text-muted)]">{queueTab === "queue" ? queue.length : queueTab === "followup" ? followUps.length : alerts.length}</span>}>
       <div className="px-4 pb-3 flex-shrink-0">
         <Segmented size="sm" value={queueTab} onChange={setQueueTab}
-          options={[{ value: "queue", label: "Work orders", count: queue.length }, { value: "attention", label: "Attention", count: alerts.length }]} />
+          options={[{ value: "queue", label: "Work orders", count: queue.length }, { value: "attention", label: "Attention", count: alerts.length }, { value: "followup", label: "Follow-up", count: followUps.length }]} />
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 flex flex-col gap-2 min-h-0">
         {queueTab === "queue" ? (
@@ -278,6 +282,8 @@ Your service visit (${jobName}) is booked for ${when}. A technician will arrive 
             )}
             {isLG && queue.length > 0 && <p className="m-0 mt-1 text-caption text-[var(--text-faint)] text-center">Drag a card onto a technician&apos;s row to schedule it</p>}
           </>
+        ) : queueTab === "followup" ? (
+          <FollowUpList onChanged={refresh} notify={(m, href) => notify(m, href)} />
         ) : (
           <>
             {alerts.length === 0 && <div className="py-10 text-center text-body text-[var(--text-muted)]">No conflicts in the next 4 days.</div>}
@@ -674,6 +680,12 @@ We have adjusted our technician's route, so your service visit (${i.jobName}, ${
                 <WarningCircle size={15} weight="fill" color="#EF4444" />{alerts.length} need attention
               </button>
             )}
+            {followUps.length > 0 && (
+              <button type="button" onClick={() => { setQueueTab("followup"); setMobilePane("queue"); }}
+                className="inline-flex items-center gap-1.5 h-9 rounded-full px-3 text-button-sm font-semibold bg-[rgba(245,158,11,0.14)] text-[var(--text-primary)]">
+                <WarningCircle size={15} weight="fill" color="#D97706" />{followUps.length} need follow-up
+              </button>
+            )}
             <button type="button" onClick={() => { setQueueTab("queue"); setMobilePane("queue"); }}
               className="inline-flex items-center gap-1.5 h-9 rounded-full px-3 text-button-sm font-semibold bg-[var(--serviceops-primary-10)] text-[var(--text-primary)]">
               <ClipboardText size={15} weight="fill" color="#F59E0B" />{queue.length} to schedule
@@ -684,7 +696,7 @@ We have adjusted our technician's route, so your service visit (${i.jobName}, ${
 
         {!isLG && (
           <Segmented value={mobilePane} onChange={setMobilePane}
-            options={[{ value: "queue", label: "Queue", count: queue.length + alerts.length }, { value: "schedule", label: "Schedule" }]} />
+            options={[{ value: "queue", label: "Queue", count: queue.length + alerts.length + followUps.length }, { value: "schedule", label: "Schedule" }]} />
         )}
 
         {isLG ? (

@@ -5,7 +5,9 @@ import { useSession } from "next-auth/react";
 import { MapPin, Phone, CaretRight, CheckCircle, Clock, WarningCircle, ArrowRight, SquaresFour } from "@phosphor-icons/react";
 import { STATUS_META, getWorkspace, type JobRecord } from "@/lib/jobsData";
 import { customerByName, fmtDate, fmtDay, JOBS_TODAY_TS } from "@/lib/serviceData";
-import { advanceJob, completionProblems, STEP_LABEL, techJobs, techStep } from "@/lib/techFlow";
+import { advanceJob, completionProblems, isStopped, STEP_LABEL, techJobs, techStep } from "@/lib/techFlow";
+import { useJobIssues } from "@/lib/jobSync";
+import JobIssueNotice from "./JobIssueNotice";
 import TechShell from "./TechShell";
 
 const mapsUrl = (q: string) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
@@ -32,16 +34,19 @@ export default function TechHome() {
   const [, setTick] = useState(0);
   const [msg, setMsg] = useState("");
   const name = session?.user?.name ?? "";
-  const { focus, todo, done, later, todayCount } = techJobs(name);
+  const { focus, todo, done, incomplete, later, todayCount } = techJobs(name);
+  const issues = useJobIssues(); // jobs the office took away while we were working (lib/jobSync.ts)
 
   const act = (job: JobRecord) => { const m = advanceJob(job); setTick(t => t + 1); if (m) { setMsg(m); setTimeout(() => setMsg(""), 3500); } };
 
   return (
     <TechShell title="Today" subtitle={`${fmtDate(JOBS_TODAY_TS)} · ${done.length} of ${todayCount} done`}>
       {msg && <div role="status" className="rounded-xl px-4 py-3 text-body font-semibold bg-[#111] text-white">{msg}</div>}
+      {issues.map(i => <JobIssueNotice key={i.jobId} issue={i} />)}
 
       {focus ? (() => {
         const ws = getWorkspace(focus.id); const step = techStep(focus, ws); const cust = customerByName(focus.customer);
+        const stopped = isStopped(ws);
         const blocked = step === "complete" ? completionProblems(focus, ws) : [];
         return (
           <section aria-label="Next job" className="rounded-2xl border-2 border-[var(--serviceops-primary)] bg-[var(--bg-card)] p-4 flex flex-col gap-3">
@@ -56,9 +61,9 @@ export default function TechHome() {
               {cust?.phone ? <a href={`tel:${cust.phone}`} className="flex items-center justify-center gap-2 h-12 rounded-xl border border-[var(--border)] text-label font-semibold text-[var(--text-primary)]"><Phone size={18} />Call</a> : <span />}
             </div>
             <p className="m-0 text-caption text-[var(--text-muted)]">{addressOf(focus)}</p>
-            <button type="button" onClick={() => (step === "complete" ? undefined : act(focus))} disabled={step === "complete"}
+            <button type="button" onClick={() => (step === "complete" ? undefined : act(focus))} disabled={step === "complete" || stopped}
               className="h-14 rounded-xl text-[17px] font-bold text-[#3B1F00] bg-[var(--serviceops-primary)] disabled:opacity-100">
-              {step === "complete" ? <Link href={`/tech/${focus.id}`} className="flex items-center justify-center gap-2 h-full text-[#3B1F00]">Finish and sign off <ArrowRight size={18} weight="bold" /></Link> : STEP_LABEL[step]}
+              {step === "complete" ? <Link href={`/tech/${focus.id}`} className="flex items-center justify-center gap-2 h-full text-[#3B1F00]">Finish and sign off <ArrowRight size={18} weight="bold" /></Link> : stopped ? "Work stopped: unsafe" : STEP_LABEL[step]}
             </button>
             {blocked.length > 0 && <p className="m-0 flex items-center gap-1.5 text-caption text-[#B45309]"><WarningCircle size={14} />Before completing: {blocked.join(", ").toLowerCase()}.</p>}
             <Link href={`/tech/${focus.id}`} className="text-center text-label font-semibold text-blue-600">Open job details</Link>
@@ -74,6 +79,7 @@ export default function TechHome() {
 
       {todo.length > 0 && <section className="flex flex-col gap-2"><h2 className="m-0 text-label font-bold text-[var(--text-muted)] uppercase tracking-wide">Later today</h2>{todo.map(j => <Row key={j.id} job={j} />)}</section>}
       {later.length > 0 && <section className="flex flex-col gap-2"><h2 className="m-0 text-label font-bold text-[var(--text-muted)] uppercase tracking-wide">Coming up</h2>{later.map(j => <Row key={j.id} job={j} />)}</section>}
+      {incomplete.length > 0 && <section className="flex flex-col gap-2"><h2 className="m-0 text-label font-bold text-[var(--text-muted)] uppercase tracking-wide">Could not finish</h2>{incomplete.map(j => <Row key={j.id} job={j} />)}</section>}
       {done.length > 0 && <section className="flex flex-col gap-2"><h2 className="m-0 text-label font-bold text-[var(--text-muted)] uppercase tracking-wide">Completed today</h2>{done.map(j => <Row key={j.id} job={j} />)}</section>}
 
       <Link href="/jobs" className="flex items-center justify-center gap-2 h-11 text-label font-semibold text-[var(--text-muted)]"><SquaresFour size={16} />Open the full app</Link>

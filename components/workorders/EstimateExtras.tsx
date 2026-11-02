@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Button from "@mui/material/Button";
 import { PaperPlaneTilt, Trash, Copy, ArrowsClockwise, SealCheck } from "@phosphor-icons/react";
-import { fmtDate, money, setEstimateStatus, logWO, estimateTotal, type Estimate, type WorkOrder, type PriceLine } from "@/lib/serviceData";
+import { fmtDate, money, setEstimateStatus, logWO, estimateTotal, effectiveDepositPct, type Estimate, type WorkOrder, type PriceLine } from "@/lib/serviceData";
 
 type CatalogItem = { id: string; name: string; price: number; active: boolean };
 const TAX = 18;
@@ -40,7 +40,7 @@ export default function EstimateExtras({ estimate, wo, email, refresh, notify }:
     setBusy(true);
     const res = await fetch("/api/public-links", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kind: "estimate", ref: estimate.number, customer: estimate.customer, title: wo.title, email: email ?? "", taxPct: TAX, lines: estimate.lines, options: estimate.options, depositPct: estimate.depositPct }),
+      body: JSON.stringify({ kind: "estimate", ref: estimate.number, customer: estimate.customer, title: wo.title, email: email ?? "", taxPct: TAX, lines: estimate.lines, options: estimate.options, depositPct: effectiveDepositPct(estimate) }),
     });
     const data = await res.json().catch(() => ({}));
     setBusy(false);
@@ -55,7 +55,8 @@ export default function EstimateExtras({ estimate, wo, email, refresh, notify }:
   };
 
   const total = estimateTotal(estimate);
-  const deposit = estimate.depositPct ? Math.round(total * estimate.depositPct / 100) : 0;
+  const depositPct = effectiveDepositPct(estimate);
+  const deposit = depositPct ? Math.round(total * depositPct / 100) : 0;
 
   return (
     <div className="flex flex-col gap-4">
@@ -69,9 +70,9 @@ export default function EstimateExtras({ estimate, wo, email, refresh, notify }:
       {editable && (
         <div className="flex flex-wrap items-center gap-3">
           <label className="text-body text-[var(--text-muted)]" htmlFor="deposit">Deposit on approval</label>
-          <input id="deposit" type="number" min={0} max={100} className={`${field} w-[84px]`} value={estimate.depositPct ?? 0}
+          <input id="deposit" type="number" min={0} max={100} className={`${field} w-[84px]`} value={depositPct}
             onChange={e => change(() => { estimate.depositPct = Math.min(100, Math.max(0, Number(e.target.value) || 0)); })} />
-          <span className="text-body text-[var(--text-muted)]">% {deposit > 0 && `= ${money(deposit)} of ${money(total)}`}</span>
+          <span className="text-body text-[var(--text-muted)]">% {estimate.depositPct === undefined && depositPct > 0 && "(company default) "}{deposit > 0 && `= ${money(deposit)} of ${money(total)}`}</span>
         </div>
       )}
 

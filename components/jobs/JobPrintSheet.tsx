@@ -25,7 +25,9 @@ export interface PrintPayload {
   paymentStatus: string;
   invoiceNumber: string | null;
   /** Set when this invoice is one instalment of a progress-billed job. */
-  stage?: { label: string; pct: number; amount: number; index: number; count: number } | null;
+  stage?: { label: string; pct: number; amount: number; adjustment?: number; index: number; count: number } | null;
+  /** Money already received and still due, for an invoice. */
+  ledger?: { deposit: number; received: number; credited: number; balance: number };
   /** Dates, terms, references and bill-to for an invoice. Null on a job card. */
   invoiceDoc: { issuedOn: number; dueOn: number; terms: string; woNumber: string; requestNumber: string; billTo: { name: string; address: string; email: string; phone: string } } | null;
   checklist: { label: string; done: boolean }[];
@@ -33,7 +35,20 @@ export interface PrintPayload {
   printedAt: string;
 }
 
-const money = (n: number) => `$${n.toLocaleString("en-US")}`;
+const money = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+
+/** Deposit, payments, credit notes and what is still due: the same rows on a single invoice and on a stage. */
+function LedgerRows({ ledger }: { ledger?: PrintPayload["ledger"] }) {
+  if (!ledger) return null;
+  return (
+    <>
+      {ledger.deposit > 0 && <Row label="Deposit received" value={`- ${money(ledger.deposit)}`} />}
+      {ledger.received > 0 && <Row label="Payments received" value={`- ${money(ledger.received)}`} />}
+      {ledger.credited > 0 && <Row label="Credit notes" value={`- ${money(ledger.credited)}`} />}
+      <Row label="Balance due" value={money(ledger.balance)} />
+    </>
+  );
+}
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
@@ -156,7 +171,7 @@ export default function JobPrintSheet({ payload }: { payload: PrintPayload | nul
               <th style={{ textAlign: "right", padding: "4px 0", width: 100 }}>Amount</th>
             </tr></thead>
             <tbody><tr style={{ borderBottom: "1px solid #E5E5E5" }}>
-              <td style={{ padding: "4px 0" }}>{p.job.jobName}: {p.stage.label} (stage {p.stage.index + 1} of {p.stage.count})</td>
+              <td style={{ padding: "4px 0" }}>{p.job.jobName}: {p.stage.label} (stage {p.stage.index + 1} of {p.stage.count}){p.stage.adjustment ? ` · includes ${p.stage.adjustment > 0 ? "+" : "-"}${money(Math.abs(p.stage.adjustment))} for changes to the job total since an earlier stage was invoiced` : ""}</td>
               <td style={{ padding: "4px 0", textAlign: "right" }}>{p.stage.pct}%</td>
               <td style={{ padding: "4px 0", textAlign: "right", fontWeight: 600 }}>{money(p.stage.amount)}</td>
             </tr></tbody>
@@ -168,6 +183,7 @@ export default function JobPrintSheet({ payload }: { payload: PrintPayload | nul
               <td style={{ padding: "6px 0 0", fontWeight: 800, fontSize: 14 }}>{money(p.stage.amount)}</td>
             </tr>
             <Row label="Payment Status" value={p.paymentStatus} />
+            <LedgerRows ledger={p.ledger} />
           </tbody></table>
         </>
       ) : (
@@ -210,6 +226,7 @@ export default function JobPrintSheet({ payload }: { payload: PrintPayload | nul
             <td style={{ padding: "6px 0 0", fontWeight: 800, fontSize: 14 }}>{money(p.total)}</td>
           </tr>
           <Row label="Payment Status" value={p.paymentStatus} />
+          <LedgerRows ledger={p.ledger} />
         </tbody>
       </table>
 

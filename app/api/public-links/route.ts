@@ -17,6 +17,7 @@ const body = z.object({
   lines: z.array(line).max(60).default([]),
   options: z.array(z.object({ key: z.string(), label: z.string().max(60), lines: z.array(line).max(60) })).max(3).optional(),
   depositPct: z.number().min(0).max(100).optional(),
+  // Ignored for invoices: the pay page reads the balance from the saved invoice ledger.
   amount: z.number().min(0).optional(),
 });
 
@@ -33,7 +34,7 @@ export async function POST(req: Request) {
   const token = newToken();
   const org = await db.organization.findUnique({ where: { id: r.user.orgId }, select: { name: true } });
   await db.publicLink.create({
-    data: { orgId: r.user.orgId, kind: d.kind, ref: d.ref, tokenHash: sha256(token), expiresAt: new Date(Date.now() + 30 * 86_400_000), payload: JSON.stringify({ ...d, company: org?.name ?? "" }) },
+    data: { orgId: r.user.orgId, kind: d.kind, ref: d.ref, tokenHash: sha256(token), expiresAt: new Date(Date.now() + 30 * 86_400_000), payload: JSON.stringify({ ...d, amount: undefined, company: org?.name ?? "" }) },
   });
   const url = `${appUrl()}/${d.kind === "estimate" ? "approve" : d.kind === "invoice" ? "pay" : "review"}/${token}`;
   const subject = d.kind === "estimate" ? `Estimate ${d.ref} from ${org?.name}` : d.kind === "invoice" ? `Invoice ${d.ref} from ${org?.name}` : `How did we do? ${org?.name}`;
@@ -54,7 +55,7 @@ export async function GET() {
   if ("error" in r) return r.error;
   const rows = await db.publicLink.findMany({
     where: { orgId: r.user.orgId, status: { not: "open" } },
-    select: { kind: true, ref: true, status: true, chosenOption: true, signedName: true, signedAt: true, paidAmount: true },
+    select: { id: true, kind: true, ref: true, status: true, chosenOption: true, signedName: true, signedAt: true, paidAmount: true },
     orderBy: { createdAt: "desc" }, take: 200,
   });
   return NextResponse.json(rows);

@@ -113,7 +113,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           user = (await asUser(u)) as typeof user;
         }
       }
-      return authConfig.callbacks.jwt({ token, user, trigger, session } as never);
+      const next = authConfig.callbacks.jwt({ token, user, trigger, session } as never) as typeof token;
+      // Every few minutes re-read the person: a changed role or a deactivated account must not wait for the 7-day session to end.
+      const REFRESH_MS = 5 * 60_000;
+      if (next.id && (!next.checkedAt || Date.now() - next.checkedAt > REFRESH_MS)) {
+        const u = await db.user.findUnique({ where: { id: next.id }, select: { role: true, status: true, orgId: true, name: true } });
+        if (!u || u.status === "Deactivated") return null;
+        next.role = u.role; next.orgId = u.orgId; next.name = u.name; next.checkedAt = Date.now();
+      }
+      return next;
     },
   },
 });

@@ -1,6 +1,6 @@
-import { ESTIMATES, allInvoices, recordPayment, setEstimateStatus, workOrderById, logWO, type Estimate } from "@/lib/serviceData";
+import { ESTIMATES, applyLinkPayment, setEstimateStatus, workOrderById, logWO, type Estimate } from "@/lib/serviceData";
 
-type LinkUpdate = { kind: "estimate" | "invoice"; ref: string; status: "approved" | "declined" | "paid"; chosenOption: string | null; signedName: string | null; signedAt: string | null; paidAmount: number | null };
+type LinkUpdate = { id: string; kind: "estimate" | "invoice"; ref: string; status: "approved" | "declined" | "paid"; chosenOption: string | null; signedName: string | null; signedAt: string | null; paidAmount: number | null };
 
 /**
  * Applies what customers did through their links (approved or declined an estimate, paid an invoice) to the
@@ -32,8 +32,8 @@ export async function applyLinkUpdates(): Promise<boolean> {
         changed = true;
       }
     } else if (r.status === "paid") {
-      const inv = allInvoices().find(i => i.number === r.ref);
-      if (inv && inv.status !== "Paid") { recordPayment(inv); changed = true; }
+      // One payment per link, never above the balance; running this again changes nothing.
+      if (r.paidAmount && applyLinkPayment(r.ref, r.id, r.paidAmount, r.signedName ?? "Card payment", r.signedAt ? Date.parse(r.signedAt) : Date.now())) changed = true;
     }
   }
   return changed;

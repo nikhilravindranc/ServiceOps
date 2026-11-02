@@ -12,7 +12,7 @@ import { CARD_SHADOW } from "@/components/dashboard/DashboardSection";
 import { useTheme } from "@/components/ThemeContext";
 import { ALL_JOBS, STATUS_ORDER, STATUS_META, SLA_HOURS_BY_SERVICE, SERVICE_TYPE_ORDER } from "@/lib/jobsData";
 import {
-  SERVICE_HISTORY, TECH_PROFILES, CUSTOMERS, PARTS, allInvoices, bookedHours, partUsed30, outstanding, money,
+  SERVICE_HISTORY, TECH_PROFILES, CUSTOMERS, PARTS, allInvoices, invoiceSummary, bookedHours, partUsed30, money,
   JOBS_TODAY_TS, DAY_MS,
 } from "@/lib/serviceData";
 
@@ -87,8 +87,8 @@ function buildReports(isDark: boolean): Report[] {
 
   // 9 · Billable activity — invoiced value per month
   const inv = allInvoices();
-  const billed = months.map(m => ({ label: m, value: inv.filter(i => monthKey(i.issuedOn) === m).reduce((s, i) => s + i.amount, 0) }));
-  const outstandingNow = inv.reduce((s, i) => s + outstanding(i), 0);
+  const billed = months.map(m => ({ label: m, value: inv.filter(i => i.status !== "Void" && i.status !== "Draft" && monthKey(i.issuedOn) === m).reduce((s, i) => s + i.amount, 0) }));
+  const outstandingNow = invoiceSummary(inv).outstanding;
 
   return [
     {

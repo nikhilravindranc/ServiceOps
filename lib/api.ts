@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { db } from "@/lib/db";
 
 export type SessionUser = { id: string; orgId: string; role: string; name?: string | null; email?: string | null };
 
@@ -8,8 +9,12 @@ export async function requireUser(roles?: string[]): Promise<{ user: SessionUser
   const session = await auth();
   const u = session?.user;
   if (!u?.id) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
-  if (roles && !roles.includes(u.role)) return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
-  return { user: u };
+  // The database is the source of truth, not the sign-in token: a changed role or a deactivated person takes effect on the next request.
+  const row = await db.user.findUnique({ where: { id: u.id }, select: { role: true, status: true, orgId: true, name: true } });
+  if (!row || row.status === "Deactivated") return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
+  const user = { ...u, role: row.role, orgId: row.orgId, name: row.name };
+  if (roles && !roles.includes(user.role)) return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
+  return { user };
 }
 
 export const ADMIN = ["Administrator"];

@@ -8,6 +8,8 @@ export type JobStatus =
   | "Yet to Start" | "Scheduled" | "En route" | "On site" | "Pending" | "Incomplete" | "Completed" | "Cancelled";
 
 export type JobPriority = "High" | "Medium" | "Low";
+import type { FailReason, FollowUpAction, SignOffKind } from "@/lib/fieldPolicy";
+import { stageAmounts } from "@/lib/ledger";
 
 export type ServiceType =
   | "HVAC" | "Mechanical" | "Plumbing" | "Electrical" | "Preventive" | "Elevator";
@@ -470,11 +472,22 @@ export function createJob(input: NewJobInput): JobRecord {
 export interface JobPhoto      { id: string; name: string; src: string; at: string }
 export interface JobNote       { id: string; text: string; author: string; at: string }
 export interface JobAttachment { id: string; name: string; size: string }
-export interface JobPart       { item: string; qty: number; rate: number }
+/** `partNo` and `fromVan` are set when the technician took the part from their own van (so undoing puts it back). */
+export interface JobPart       { item: string; qty: number; rate: number; partNo?: string; fromVan?: number }
 export interface JobActivity   { label: string; at: string }
-export interface JobInvoice    { number: string; generatedAt: string }
+/** `amount` is what the invoice was raised for; it is kept as it was (a sent invoice is never edited). `adjustment` is what earlier stages missed, carried onto a progress-billing stage. */
+export interface JobInvoice    { number: string; generatedAt: string; amount?: number; adjustment?: number }
 export interface JobSignature  { name: string; dataUrl: string; at: string }
-export interface JobPayment    { method: string; amount: number; reference: string; at: string }
+/** How the visit was signed off. "customer" and "other" come with a signature; the other two need a note. */
+export interface JobSignOff    { kind: SignOffKind; name?: string; role?: string; note?: string; at: string; by: string }
+/** Why a visit could not be finished, and (once the office decides) what happens next. */
+export interface JobOutcome    { reason: FailReason; note: string; at: string; by: string; followUp?: JobFollowUp }
+export interface JobFollowUp   { action: FollowUpAction; note: string; at: string; by: string; newJobId?: number; newJobRef?: string; fee?: number }
+/** Stop work, unsafe: blocks completion until a manager clears it. */
+export interface JobSafetyFlag { note: string; at: string; by: string; timerStoppedAt?: number; /** The office was alerted (false when the alert could not be sent yet). */ notified?: boolean; clearedAt?: string; clearedBy?: string; clearNote?: string }
+/** Extra work the technician asked the office to look at (a Request in the database). */
+export interface ExtraWorkAsk  { number: string; description: string; photoRef: string; urgency: string; at: string; by: string }
+export interface JobPayment    { method: string; amount: number; reference: string; at: string; atMs?: number }
 /** One instalment of a progress-billed job: a share of the job total, invoiced on its own. */
 export interface BillingStage { label: string; pct: number; invoice: JobInvoice | null; paidOn?: number }
 export const BILLING_PLANS: Record<string, { label: string; pct: number }[]> = {
@@ -501,6 +514,15 @@ export interface JobWorkspace {
   /** Work timer: started by "Start work", stopped on completion. */
   workStartedAt?: number;
   workEndedAt?: number;
+  /** How the job was signed off (signature, another person, refused, unattended). Older jobs with only a signature count as the customer. */
+  signOff?: JobSignOff;
+  /** Set when the technician could not finish the visit. */
+  outcome?: JobOutcome;
+  /** Set when this job is a follow-up of another one. */
+  followUpOf?: { jobId: number; jobRef: string };
+  /** Stop-work flag; active until `clearedAt` is set. */
+  safety?: JobSafetyFlag;
+  extraWork?: ExtraWorkAsk[];
   /** Payment taken on site. */
   payment?: JobPayment;
   /** Progress billing: when set, the job is invoiced in these stages instead of one invoice. */
@@ -680,13 +702,38 @@ export function addJobPart(id: number, part: JobPart): void {
 
 export function removeJobPart(id: number, index: number): void {
   const ws = getWorkspace(id);
+  const gone = ws.extraParts[index];
   ws.extraParts = ws.extraParts.filter((_, i) => i !== index);
+  // Anything taken from the van is back in the van now, because van stock is worked out from the parts on jobs.
+  if (gone) logActivity(id, `Part removed — ${gone.item} × ${gone.qty}${gone.fromVan ? " (back in the van)" : ""}`);
 }
+
+/**
+ * Units of a part a technician has used from the van across all jobs. Van stock is the van's starting quantity (Part.techStock)
+ * minus this. It is worked out from the job records, which technicians may save, so a technician never has to write to the parts list.
+ */
+export function vanUsed(partNo: string, technician: string): number {
+  let used = 0;
+  for (const [id, ws] of Object.entries(WORKSPACES)) {
+    if (ALL_JOBS.find(j => j.id === Number(id))?.technician !== technician) continue;
+    for (const p of ws.extraParts) if (p.partNo === partNo) used += p.fromVan ?? 0;
+  }
+  return used;
+}
+
+/**
+ * serviceData tells this file how to price a job (it cannot import serviceData: that file imports this one), so an
+ * invoice keeps the amount it was raised for. A payment the technician recorded on site before the invoice existed is
+ * applied to the invoice by serviceData (see `raiseInvoice` there).
+ */
+let jobTotalOf: ((id: number) => number) | null = null;
+export const registerJobTotal = (fn: (id: number) => number) => { jobTotalOf = fn; };
+export const currentJobTotal = (id: number) => (jobTotalOf ? jobTotalOf(id) : undefined);
 
 export function generateInvoice(id: number): JobInvoice {
   const ws = getWorkspace(id);
   const job = ALL_JOBS.find(j => j.id === id);
-  ws.invoice = { number: `INV-${job?.jobId.replace(/^\D+-/, "") ?? id}`, generatedAt: nowStamp() };
+  ws.invoice = { number: `INV-${job?.jobId.replace(/^\D+-/, "") ?? id}`, generatedAt: nowStamp(), amount: currentJobTotal(id) };
   logActivity(id, `Invoice ${ws.invoice.number} generated`);
   return ws.invoice;
 }
@@ -706,7 +753,8 @@ export function invoiceStage(id: number, index: number): JobInvoice | null {
   const job = ALL_JOBS.find(j => j.id === id);
   const stage = ws.stages?.[index];
   if (!stage || stage.invoice) return stage?.invoice ?? null;
-  stage.invoice = { number: `INV-${job?.jobId.replace(/^\D+-/, "") ?? id}-${index + 1}`, generatedAt: nowStamp() };
+  const planned = jobTotalOf ? stageAmounts(jobTotalOf(id), ws.stages!.map(s => s.pct), ws.stages!.map(s => s.invoice?.amount === undefined ? undefined : { amount: s.invoice.amount, adjustment: s.invoice.adjustment }))[index] : undefined;
+  stage.invoice = { number: `INV-${job?.jobId.replace(/^\D+-/, "") ?? id}-${index + 1}`, generatedAt: nowStamp(), amount: planned?.amount, adjustment: planned?.adjustment };
   logActivity(id, `Invoice ${stage.invoice.number} generated (${stage.label}, ${stage.pct}%)`);
   return stage.invoice;
 }
@@ -733,15 +781,71 @@ export function finishJobWork(id: number): void {
   logActivity(id, `Work completed (${Math.max(1, Math.round((ws.workEndedAt - ws.workStartedAt) / 60000))} min on site)`);
 }
 
-export function setJobSignature(id: number, name: string, dataUrl: string): void {
-  getWorkspace(id).signature = { name: name.trim(), dataUrl, at: nowStamp() };
-  logActivity(id, `Customer sign-off by ${name.trim()}`);
+export function setJobSignature(id: number, name: string, dataUrl: string, extra?: { role?: string }): void {
+  const ws = getWorkspace(id);
+  const at = nowStamp();
+  ws.signature = { name: name.trim(), dataUrl, at };
+  if (extra?.role) {
+    ws.signOff = { kind: "other", name: name.trim(), role: extra.role.trim(), at, by: "" };
+    logActivity(id, `Signed by ${name.trim()} (${extra.role.trim()}), not the customer`);
+  } else {
+    ws.signOff = { kind: "customer", name: name.trim(), at, by: "" };
+    logActivity(id, `Customer sign-off by ${name.trim()}`);
+  }
+}
+
+/** Records "customer refused to sign" or "nobody on site"; clears any earlier signature so the report shows one clear answer. */
+export function setJobNoSignature(id: number, kind: "refused" | "unattended", note: string, by: string): void {
+  const ws = getWorkspace(id);
+  delete ws.signature;
+  ws.signOff = { kind, note: note.trim(), at: nowStamp(), by };
+  logActivity(id, kind === "refused" ? `Customer refused to sign: ${note.trim()}` : `Completed with nobody on site: ${note.trim()}`);
+}
+
+export function clearJobSignOff(id: number): void {
+  const ws = getWorkspace(id);
+  delete ws.signature; delete ws.signOff;
+  logActivity(id, "Sign-off removed");
+}
+
+/** The technician could not finish: the job becomes Incomplete, the timer stops and the reason is kept for the office. */
+export function recordJobOutcome(id: number, reason: FailReason, note: string, by: string): void {
+  const ws = getWorkspace(id);
+  const at = nowStamp();
+  ws.outcome = { reason, note: note.trim(), at, by };
+  if (ws.workStartedAt && !ws.workEndedAt) ws.workEndedAt = Date.now();
+  updateJob(id, { status: "Incomplete" });
+  logActivity(id, `Visit not finished: ${reason}${note.trim() ? ` (${note.trim()})` : ""}`);
+}
+
+/** Stop work, unsafe: stops the timer and flags the job until a manager clears it. */
+export function flagJobUnsafe(id: number, note: string, by: string): void {
+  const ws = getWorkspace(id);
+  ws.safety = { note: note.trim(), at: nowStamp(), by };
+  if (ws.workStartedAt && !ws.workEndedAt) { ws.workEndedAt = Date.now(); ws.safety.timerStoppedAt = ws.workEndedAt; }
+  logActivity(id, `STOP WORK, unsafe: ${note.trim()}`);
+}
+
+export function clearJobUnsafe(id: number, note: string, by: string): void {
+  const ws = getWorkspace(id);
+  if (!ws.safety || ws.safety.clearedAt) return;
+  // Work can carry on: the clock restarts and the time spent stopped is not counted.
+  if (ws.safety.timerStoppedAt && ws.workStartedAt && ws.workEndedAt === ws.safety.timerStoppedAt) {
+    ws.workStartedAt += Date.now() - ws.safety.timerStoppedAt;
+    delete ws.workEndedAt;
+  }
+  ws.safety = { ...ws.safety, clearedAt: nowStamp(), clearedBy: by, clearNote: note.trim() };
+  logActivity(id, `Safety flag cleared by ${by}${note.trim() ? `: ${note.trim()}` : ""}`);
+}
+
+export function addExtraWorkAsk(id: number, ask: Omit<ExtraWorkAsk, "at">): void {
+  getWorkspace(id).extraWork = [...(getWorkspace(id).extraWork ?? []), { ...ask, at: nowStamp() }];
+  logActivity(id, `Extra work requested (${ask.number}, ${ask.urgency}): ${ask.description}`);
 }
 
 export function recordJobPayment(id: number, payment: Omit<JobPayment, "at">): void {
   const ws = getWorkspace(id);
-  ws.payment = { ...payment, at: nowStamp() };
-  if (payment.method !== "Pay later") ws.paidOn = Date.now();
+  ws.payment = { ...payment, at: nowStamp(), atMs: Date.now() };
   logActivity(id, `Payment of $${Math.round(payment.amount).toLocaleString("en-US")} recorded (${payment.method})`);
 }
 

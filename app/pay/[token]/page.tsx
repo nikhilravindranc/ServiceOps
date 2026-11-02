@@ -3,7 +3,7 @@ import { use, useEffect, useState } from "react";
 import AuthCard, { authButton } from "@/components/auth/AuthCard";
 import TestCardForm, { EMPTY_CARD } from "@/components/pay/TestCardForm";
 
-type Doc = { kind: string; status: string; ref: string; company: string; customer: string; title: string; amount?: number };
+type Doc = { kind: string; status: string; ref: string; company: string; customer: string; title: string; amount?: number; total?: number; paid?: number; void?: boolean; unavailable?: boolean };
 const money = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function PayPage({ params }: { params: Promise<{ token: string }> }) {

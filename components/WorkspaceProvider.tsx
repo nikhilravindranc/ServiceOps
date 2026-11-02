@@ -8,6 +8,7 @@ import { applyEntity, clearWorkspace, entityMap, importEntities, importWorkspace
 import { clearPending, loadPending, savePending, type PendingChanges } from "@/lib/offlineQueue";
 import { setSyncState } from "@/lib/syncState";
 import { tellServiceWorkerUser } from "@/components/SwRegister";
+import { keepUnsavedWork, reconcileMyJobs, setSyncHost } from "@/lib/jobSync";
 
 const NO_DATA_PAGES = ["/login", "/register", "/forgot-password", "/reset-password", "/verify-email", "/invite", "/onboarding", "/book", "/approve", "/pay", "/review", "/portal", "/dev-idp"];
 const SAVE_EVERY_MS = 4000;
@@ -57,6 +58,7 @@ export default function WorkspaceProvider({ children }: { children: ReactNode })
     if (!needsData || status !== "authenticated" || state.current.started) return;
     state.current.started = true;
     state.current.userId = userId;
+    setSyncHost(() => state.current.saved); // lib/jobSync.ts reads the saved versions to handle reassigned jobs
 
     const applyPending = (p: PendingChanges) => {
       const s = state.current;
@@ -153,17 +155,27 @@ export default function WorkspaceProvider({ children }: { children: ReactNode })
         cur.deletes = deletes; slices.push(cur);
         for (const slice of slices) {
           const res = await fetch("/api/workspace", { method: "PUT", keepalive: keepalive && slices.length === 1, headers: { "Content-Type": "application/json" }, body: JSON.stringify(slice) }).catch(() => null);
-          if (!res?.ok) { ok = false; break; }
+          if (!res?.ok) {
+            // Technicians: a refused save usually means a job was taken away. Put its saved copy back, keep the unsaved work on the device, and tell the screen (lib/jobSync.ts).
+            if (res?.status === 403 && session?.user?.role === "Technician") {
+              const lost = await reconcileMyJobs(session.user.name ?? "");
+              if (lost.length) { setNotice(`${lost.length === 1 ? lost[0].jobRef : `${lost.length} jobs`} changed by the office. Open your jobs for details.`); setTimeout(() => setNotice(""), 8000); }
+            }
+            ok = false; break;
+          }
           const out: { versions: [string, string, number][]; conflicts: [string, string, number, string | null][] } = await res.json();
           const sent = new Map(slice.changes.map(c => [entityId(c[0], c[1]), c[3]]));
           for (const [k, key, v] of out.versions) { const id = entityId(k, key); if (sent.has(id)) s.saved.set(id, { version: v, json: sent.get(id)! }); }
           for (const d of slice.deletes) if (!out.conflicts.some(c => c[0] === d[0] && c[1] === d[1])) s.saved.delete(entityId(d[0], d[1]));
           // Records someone else changed first: keep their copy, so nothing is silently overwritten.
+          let kept = 0;
           for (const [k, key, v, json] of out.conflicts) {
+            if (keepUnsavedWork(k, key, s.saved)) kept++; // a job workspace with unsaved work: a copy stays on this device
             applyEntity(k, key, json);
             if (json === null) s.saved.delete(entityId(k, key)); else s.saved.set(entityId(k, key), { version: v, json });
           }
-          if (out.conflicts.length) { setNotice(`${out.conflicts.length} record${out.conflicts.length === 1 ? " was" : "s were"} changed by someone else. Their version was kept.`); setTimeout(() => setNotice(""), 6000); }
+          if (out.conflicts.length) { setNotice(`${out.conflicts.length} record${out.conflicts.length === 1 ? " was" : "s were"} changed by someone else. Their version was kept.${kept ? " Your unsaved work was kept on this device." : ""}`); setTimeout(() => setNotice(""), 6000); }
+          if (out.conflicts.some(c => c[0] === "jobs" || c[0] === "workspaces") && session?.user?.role === "Technician") reconcileMyJobs(session.user.name ?? "").catch(() => {});
         }
       } catch { ok = false; } finally { saving = false; }
       const left = diff();

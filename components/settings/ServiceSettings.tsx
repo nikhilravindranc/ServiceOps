@@ -8,12 +8,14 @@ import MenuItem from "@mui/material/MenuItem";
 import Button from "@mui/material/Button";
 import {
   Buildings, Clock, Hash, Wrench, ListChecks, Flag, Timer, MapTrifold, UsersThree, Bell, FileText, SquaresFour, ShieldCheck,
-  Plus, PencilSimple, DotsSixVertical, Database,
+  Plus, PencilSimple, DotsSixVertical, Database, CurrencyDollar,
 } from "@phosphor-icons/react";
 import { PageShell, PageHeader, MiniTable, Pill, SERVICE_ICON, useToast, Segmented } from "@/components/ui/ServiceOpsUI";
 import { CARD_SHADOW } from "@/components/dashboard/DashboardSection";
 import { useJobFieldSx } from "@/components/jobs/jobFormStyles";
 import DataPanel from "@/components/settings/DataPanel";
+import PaymentsPanel from "@/components/settings/PaymentsPanel";
+import AuditPanel from "@/components/settings/AuditPanel";
 import AppearancePanel from "@/components/settings/AppearancePanel";
 import { CertPanel, DeliveryLogPanel, AutomationsPanel } from "@/components/settings/OpsPanels";
 import { PermissionPanel, RolesPanel } from "@/components/settings/AccessPanels";
@@ -21,13 +23,14 @@ import { SERVICE_TYPE_ORDER, STATUS_ORDER, STATUS_META, PRIORITY_META, SLA_HOURS
 import { SERVICE_ZONES, TECH_PROFILES, CUSTOMERS, USERS, JOB_DURATION_HRS, fmtDate } from "@/lib/serviceData";
 import { useTheme } from "@/components/ThemeContext";
 
-type Key = "general" | "hours" | "numbering" | "types" | "statuses" | "priorities" | "sla" | "zones" | "teams" | "notifications" | "templates" | "permission" | "data" | "certs" | "deliverylog" | "automations" | "appearance";
+type Key = "general" | "hours" | "numbering" | "types" | "statuses" | "priorities" | "sla" | "zones" | "teams" | "notifications" | "templates" | "permission" | "data" | "payments" | "certs" | "deliverylog" | "automations" | "appearance" | "audit";
 const NAV: { group: string; items: { key: Key; label: string; icon: typeof Buildings; hint: string }[] }[] = [
   { group: "Organization", items: [
     { key: "general", label: "General", icon: Buildings, hint: "Company details, time zone, currency" },
     { key: "appearance", label: "Appearance", icon: SquaresFour, hint: "Colour theme, layout, banner" },
     { key: "hours", label: "Business hours", icon: Clock, hint: "Working week and holidays" },
     { key: "numbering", label: "Numbering", icon: Hash, hint: "Prefixes for records" },
+    { key: "payments", label: "Payments", icon: CurrencyDollar, hint: "Terms, deposits, staged billing, methods" },
   ] },
   { group: "Service setup", items: [
     { key: "types", label: "Service types", icon: Wrench, hint: "Durations, skills, checklists" },
@@ -47,6 +50,7 @@ const NAV: { group: string; items: { key: Key; label: string; icon: typeof Build
   { group: "Access & workspace", items: [
     { key: "permission", label: "Roles & permissions", icon: ShieldCheck, hint: "What each role can do" },
     { key: "data", label: "Data & booking", icon: Database, hint: "CSV import, sample data, online booking" },
+    { key: "audit", label: "Activity log", icon: ListChecks, hint: "Who changed what, and backups" },
   ] },
 ];
 const ALL = NAV.flatMap(g => g.items);
@@ -104,6 +108,8 @@ export default function ServiceSettings() {
       case "automations": return <Panel title="Automations" description="Follow-ups and reminders that run for you."><AutomationsPanel notify={notify} /></Panel>;
       case "deliverylog": return <Panel title="Delivery log" description="Customer messages sent or recorded by ServiceOps."><DeliveryLogPanel notify={notify} /></Panel>;
       case "appearance": return <Panel title="Appearance" description="Colour theme, layout and the Home banner."><AppearancePanel notify={notify} /></Panel>;
+      case "payments": return <Panel title="Payments" description="How the company takes payment: terms, an optional deposit, optional staged billing and the methods staff can record."><PaymentsPanel notify={notify} /></Panel>;
+      case "audit": return <Panel title="Activity log" description="Every change to money, customers, jobs and settings: who, when, and the before and after values."><AuditPanel /></Panel>;
       case "data": return <Panel title="Data & booking" description="Import records, reset sample data and set up online booking."><DataPanel notify={notify} /></Panel>;
       case "general": return (
         <Panel title="General" description="How ServiceOps describes your business and formats information." action={saveBtn}>

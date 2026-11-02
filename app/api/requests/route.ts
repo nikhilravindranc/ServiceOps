@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { OFFICE, audit, requireUser } from "@/lib/api";
 import { WORK_TYPES, missingDetails, type WorkType } from "@/lib/workTypes";
+import { createExtraWorkRequest } from "@/lib/techApi";
 
 const SOURCES = ["Phone", "Email", "Web form", "Online booking", "Customer portal", "Technician"] as const;
 const create = z.object({
@@ -35,8 +36,13 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const r = await requireUser(OFFICE);
+  const r = await requireUser([...OFFICE, "Technician"]);
   if ("error" in r) return r.error;
+  // A technician may only ask for extra work on a job assigned to them (source "Technician", nothing else); the office decides what becomes a work order.
+  if (r.user.role === "Technician") {
+    const out = await createExtraWorkRequest(r.user, await req.json().catch(() => null));
+    return NextResponse.json(out.json, { status: out.status });
+  }
   const parsed = create.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Enter a customer, contact, site and a short summary." }, { status: 400 });
 

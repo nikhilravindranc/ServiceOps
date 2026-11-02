@@ -27,6 +27,7 @@ import {
 } from "@phosphor-icons/react";
 import EditJobDrawer from "@/components/jobs/EditJobDrawer";
 import JobCosting from "@/components/jobs/JobCosting";
+import FieldExceptions from "@/components/jobs/FieldExceptions";
 import JobActionDialogs, { type JobDialogKind } from "@/components/jobs/JobActionDialogs";
 import JobPrintSheet, { type PrintKind, type PrintPayload } from "@/components/jobs/JobPrintSheet";
 import { CARD_SHADOW, type Tone } from "@/components/dashboard/DashboardSection";
@@ -37,10 +38,11 @@ import {
   getWorkspace, seedJobPhotos, editJob, updateJob, logActivity, createJob,
   addJobPhotos, removeJobPhoto, addJobNote, removeJobNote,
   addJobAttachments, removeJobAttachment, addJobPart, removeJobPart,
-  generateInvoice, setJobChecklist, BILLING_PLANS, setBillingPlan, invoiceStage, toEditInput, formatFileSize, nowStamp,
+  setJobChecklist, BILLING_PLANS, setBillingPlan, toEditInput, formatFileSize, nowStamp,
   type JobRecord, type ServiceType, type JobStatus, type EditJobInput, type JobPart,
 } from "@/lib/jobsData";
-import { workOrderForJob, assetForJob, customerHref, customerByName, invoiceReadiness, invoiceDocument, stageAmount } from "@/lib/serviceData";
+import { workOrderForJob, assetForJob, customerHref, customerByName, invoiceReadiness, invoiceDocument, stageAmountFor, invoicesForJob, jobPaymentStatus, raiseInvoice, paymentSettings, invoicePaymentLabel, type Invoice } from "@/lib/serviceData";
+import { usd } from "@/lib/ledger";
 import InvoiceBlockedDialog, { type InvoiceProblem } from "@/components/billing/InvoiceBlockedDialog";
 
 // ─────────────────────────────────────────────
@@ -131,6 +133,10 @@ function starRating(rating: number, size = 13) {
 //  Derive a full detail view-model from the base
 //  JobRecord (shared with the listing page).
 // ─────────────────────────────────────────────
+/** What a printed invoice shows about money received and still due. */
+const ledgerForPrint = (inv: Invoice) => ({ deposit: inv.deposit, received: inv.paid - inv.deposit, credited: inv.credited, balance: inv.balance });
+const stageStatus = (invoices: Invoice[], number: string) => { const i = invoices.find(x => x.number === number); return i ? (i.status === "Sent" ? "unpaid" : i.status.toLowerCase()) : "unpaid"; };
+
 function buildDetail(job: JobRecord) {
   const tmpl = SERVICE_TEMPLATES[job.serviceType];
   const isPrimary = job.id === 1;
@@ -190,9 +196,7 @@ function buildDetail(job: JobRecord) {
   const discount = isPrimary ? 325 : job.id % 4 === 0 ? 150 : 0;
   const tax = Math.round((labor + partsTotal) * 0.18);
   const total = labor + partsTotal + tax - discount;
-  const paymentStatus = ws.invoice
-    ? "Pending"
-    : job.status === "Completed" ? (job.id % 3 === 0 ? "Pending" : "Paid") : job.status === "Cancelled" ? "N/A" : "Pending";
+  const paymentStatus = jobPaymentStatus(job);
 
   const seedPhotoCount = isPrimary ? 3 : ["On site", "En route", "Incomplete", "Completed"].includes(job.status) ? (job.id % 4) + 1 : 0;
 
@@ -387,6 +391,7 @@ export default function JobDetail({ jobId }: { jobId: number }) {
   const notify = (msg: string, href?: string) => setToast({ msg, href });
 
   // ── Print ────────────────────────────────────
+  const invoices = useMemo(() => (job ? invoicesForJob(job.id) : []), [job, version]); // eslint-disable-line react-hooks/exhaustive-deps
   const buildPrintPayload = useCallback((kind: PrintKind): PrintPayload | null => {
     if (!job || !detail || !ws) return null;
     const checked = ws.checklist ?? CHECKLIST_ITEMS.map((_, i) => i < detail.checklistChecked);
@@ -398,30 +403,33 @@ export default function JobDetail({ jobId }: { jobId: number }) {
       description: detail.description, notes: detail.notes,
       parts: detail.parts, labor: detail.labor, partsTotal: detail.partsTotal,
       tax: detail.tax, discount: detail.discount, total: detail.total,
-      paymentStatus: detail.paymentStatus,
+      paymentStatus: invoices[0] ? invoicePaymentLabel(invoices[0]) : detail.paymentStatus,
+      ledger: invoices[0] && !invoices[0].stage ? ledgerForPrint(invoices[0]) : undefined,
       invoiceNumber: ws.invoice?.number ?? null,
       invoiceDoc: ws.invoice ? invoiceDocument(job) : null,
       checklist: CHECKLIST_ITEMS.map((label, i) => ({ label, done: !!checked[i] })),
       timeline: STEP_ORDER.map((label, i) => ({ label, done: !detail.cancelled && i < detail.doneCount })),
       printedAt: nowStamp(),
     };
-  }, [job, detail, ws]);
+  }, [job, detail, ws, invoices]);
 
   // ── Progress billing ─────────────────────────
-  const [plan, setPlan] = useState(Object.keys(BILLING_PLANS)[0]);
+  const [plan, setPlan] = useState(() => (paymentSettings().stagedOn && BILLING_PLANS[paymentSettings().stagedPlan] ? paymentSettings().stagedPlan : Object.keys(BILLING_PLANS)[0]));
   const raiseStage = (i: number) => {
     if (!job) return;
     const r = invoiceReadiness(job, i);
     if (!r.ok) { setBlocked(r.problems); return; }
-    const inv = invoiceStage(job.id, i);
+    const inv = raiseInvoice(job);
     refresh(); if (inv) notify(`${inv.number} generated`);
   };
   const printStage = (i: number) => {
     if (!job) return;
     const st = ws?.stages?.[i]; const base = buildPrintPayload("invoice");
     if (!st?.invoice || !base) return;
-    const payload: PrintPayload = { ...base, invoiceNumber: st.invoice.number, invoiceDoc: invoiceDocument(job), paymentStatus: st.paidOn ? "Paid" : "Unpaid",
-      stage: { label: st.label, pct: st.pct, amount: stageAmount(job, i), index: i, count: ws!.stages!.length } };
+    const inv = invoices.find(x => x.number === st.invoice!.number);
+    const sa = stageAmountFor(job, i);
+    const payload: PrintPayload = { ...base, invoiceNumber: st.invoice.number, invoiceDoc: invoiceDocument(job), paymentStatus: inv ? invoicePaymentLabel(inv) : "Unpaid",
+      stage: { label: st.label, pct: st.pct, amount: sa.amount, adjustment: sa.adjustment, index: i, count: ws!.stages!.length }, ledger: inv ? ledgerForPrint(inv) : undefined };
     setPrintPayload(payload);
     window.setTimeout(() => { window.print(); logActivity(job.id, `Invoice ${st.invoice!.number} printed`); refresh(); }, 80);
   };
@@ -490,7 +498,7 @@ export default function JobDetail({ jobId }: { jobId: number }) {
   };
 
   const handleInvoice = () => {
-    const inv = generateInvoice(job.id);
+    const inv = raiseInvoice(job);
     refresh();
     notify(`${inv.number} generated`);
   };
@@ -708,10 +716,19 @@ export default function JobDetail({ jobId }: { jobId: number }) {
           <span className="text-label font-bold text-[var(--text-primary)]">Total amount</span>
           <span className="text-h2 font-bold text-[var(--text-primary)]">{money(detail.total)}</span>
         </div>
+        {invoices.map(inv => (
+          <div key={inv.number} className="flex flex-col gap-1 rounded-xl px-3 py-2 bg-[var(--serviceops-tint)]">
+            <div className="flex items-center justify-between text-caption"><span className="font-semibold text-[var(--text-primary)]">{inv.number}{inv.stage ? ` · ${inv.stage.label}` : ""}</span><span className="text-[var(--text-muted)]">{inv.status}</span></div>
+            {inv.deposit > 0 && <div className="flex items-center justify-between text-caption"><span className="text-[var(--text-muted)]">Deposit already received</span><span>{usd(inv.deposit)}</span></div>}
+            <div className="flex items-center justify-between text-caption"><span className="text-[var(--text-muted)]">Received</span><span>{usd(inv.paid)}</span></div>
+            {inv.credited > 0 && <div className="flex items-center justify-between text-caption"><span className="text-[var(--text-muted)]">Credit notes</span><span>{usd(inv.credited)}</span></div>}
+            <div className="flex items-center justify-between text-caption font-semibold"><span>Balance</span><span>{usd(inv.balance)}</span></div>
+          </div>
+        ))}
         <div className="flex items-center justify-between">
           <span className="text-caption text-[var(--text-muted)]">Payment status</span>
           <Pill isDark={isDark} label={detail.paymentStatus}
-            status={detail.paymentStatus === "Paid" ? "Completed" : detail.paymentStatus === "N/A" ? "Yet to Start" : "Incomplete"} />
+            status={detail.paymentStatus === "Paid" ? "Completed" : detail.paymentStatus === "N/A" || detail.paymentStatus === "Voided" ? "Yet to Start" : "Incomplete"} />
         </div>
       </div>
     </DetailCard>
@@ -736,7 +753,8 @@ export default function JobDetail({ jobId }: { jobId: number }) {
               <div key={st.label + i} className="flex items-center gap-3 py-2.5 border-b border-[var(--border-soft)] last:border-b-0">
                 <div className="flex-1 min-w-0">
                   <p className="m-0 text-label font-semibold text-[var(--text-primary)]">{st.label} · {st.pct}%</p>
-                  <p className="m-0 text-caption text-[var(--text-muted)]">{money(stageAmount(job, i))} · {st.invoice ? `${st.invoice.number}${st.paidOn ? ", paid" : ", unpaid"}` : "Not invoiced"}</p>
+                  <p className="m-0 text-caption text-[var(--text-muted)]">{money(stageAmountFor(job, i).amount)} · {st.invoice ? `${st.invoice.number}, ${stageStatus(invoices, st.invoice.number)}` : "Not invoiced"}</p>
+                  {stageAmountFor(job, i).adjustment !== 0 && <p className="m-0 text-caption font-semibold text-amber-700">Includes {stageAmountFor(job, i).adjustment > 0 ? "+" : "-"}{money(Math.abs(stageAmountFor(job, i).adjustment))} because the job total changed after an earlier stage was invoiced (that invoice is unchanged).</p>}
                 </div>
                 {st.invoice
                   ? <Button size="small" startIcon={<Printer size={14} weight="duotone" />} onClick={() => printStage(i)}>Print</Button>
@@ -834,6 +852,9 @@ export default function JobDetail({ jobId }: { jobId: number }) {
           // `md:grid-cols-1` opts out of the global tablet auto-fit rule for .grid-cols-1
           <div className="grid grid-cols-1 md:grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,400px)] gap-4 items-start">
             <div className="flex flex-col gap-4 min-w-0">
+
+              {/* Stop-work flag, unfinished visit, unusual sign-off, extra work asked for in the field */}
+              <FieldExceptions job={job} onChange={(m, href) => { refresh(); if (m) notify(m, href); }} />
 
               {/* Job details */}
               <DetailCard icon={FileText} title="Job details" action={<EditButton onClick={() => setEditOpen(true)} />}>

@@ -11,3 +11,4 @@ COLOR_IMPLEMENTATION_STATUS.md
 *.db
 *.db-journal
 .demo-secret
+.demo-mode

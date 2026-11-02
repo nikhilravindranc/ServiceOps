@@ -1,5 +1,6 @@
 "use client";
 import { useMemo, useState } from "react";
+import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Button from "@mui/material/Button";
@@ -13,22 +14,29 @@ import {
 } from "@/components/ui/ServiceOpsUI";
 import { INVOICE_TONE, ESTIMATE_TONE } from "@/components/workorders/woShared";
 import { matchesQuery } from "@/lib/filtering";
-import { ALL_JOBS, generateInvoice, invoiceStage, getWorkspace, type JobRecord } from "@/lib/jobsData";
+import { ALL_JOBS, getWorkspace, type JobRecord } from "@/lib/jobsData";
 import {
-  allInvoices, outstanding, recordPayment, billingStateForJob, jobCharges, workOrderForJob, ESTIMATES, estimateTotal,
+  allInvoices, outstanding, invoiceSummary, raiseInvoice, saveInvoiceLedger, customerBillingProblems, creditNoteReadiness, billingStateForJob, jobCharges, workOrderForJob, ESTIMATES, estimateTotal,
   workOrderById, setEstimateStatus, customerHref, customerByName, fmtDate, fmtDay, money, JOBS_TODAY_TS, DAY_MS,
   invoiceReadiness, type Invoice, type BillingState, type InvoiceStatus,
 } from "@/lib/serviceData";
 import InvoiceBlockedDialog, { type InvoiceProblem } from "@/components/billing/InvoiceBlockedDialog";
+import InvoiceDrawer from "@/components/billing/InvoiceDrawer";
+import { PaymentDialog, CreditNoteDialog, VoidDialog, ReissueDialog } from "@/components/billing/InvoiceDialogs";
+import CreditNoteSheet, { type CreditNotePrint } from "@/components/billing/CreditNoteSheet";
+import { canManageMoney, usd } from "@/lib/ledger";
 
 type Tab = "jobs" | "invoices" | "estimates";
 type JobScope = "ready" | "accruing" | "billed";
-const BILLING_TONE: Record<BillingState, PillTone> = { "Ready to invoice": "amber", "Not billable yet": "gray", Invoiced: "blue", Paid: "green", "Not billable": "gray" };
-const INV_STATUS = ["All invoices", "Sent", "Partially paid", "Overdue", "Paid"];
+const BILLING_TONE: Record<BillingState, PillTone> = { "Ready to invoice": "amber", "Not billable yet": "gray", Invoiced: "blue", Paid: "green", Voided: "gray", "Not billable": "gray" };
+const INV_STATUS = ["All invoices", "Sent", "Partially paid", "Overdue", "Paid", "Void"];
 
 export default function BillingPage() {
   const router = useRouter();
   const { toastNode, notify } = useToast();
+  const { data: session } = useSession();
+  const role = session?.user?.role ?? "";
+  const by = session?.user?.name ?? "Office";
   const [version, setVersion] = useState(0);
   const refresh = () => setVersion(v => v + 1);
   const [tab, setTab] = useState<Tab>("jobs");
@@ -44,20 +52,41 @@ export default function BillingPage() {
   const ready = jobs.filter(r => r.state === "Ready to invoice");
   const accruing = jobs.filter(r => r.state === "Not billable yet" && ["On site", "En route", "Incomplete"].includes(r.j.status));
   const billed = jobs.filter(r => r.state === "Invoiced" || r.state === "Paid");
-  const open = invoices.filter(i => i.status !== "Paid");
-  const overdue = invoices.filter(i => i.status === "Overdue");
+  // One helper for every screen: Outstanding and Overdue are balances; void invoices are left out.
+  const totals = useMemo(() => invoiceSummary(invoices), [invoices]);
+  const open = totals.open;
+  const paidInvoices = invoices.filter(i => i.status === "Paid");
   const pendingEst = ESTIMATES.filter(e => e.status === "Sent");
 
   const [blocked, setBlocked] = useState<{ title: string; problems: InvoiceProblem[] } | null>(null);
+  // Invoice detail and the money dialogs. They hold an invoice number and look the invoice up again, so they are never stale.
+  const [selected, setSelected] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<{ kind: "pay" | "credit" | "void" | "reissue"; number: string } | null>(null);
+  const [creditPrint, setCreditPrint] = useState<CreditNotePrint | null>(null);
+  const find = (number: string | null | undefined) => (number ? invoices.find(i => i.number === number) : undefined);
+  const dialogInv = find(dialog?.number);
+  const done = (msg: string) => { setDialog(null); refresh(); notify(msg); };
+  const openCredit = (i: Invoice) => {
+    const problems = creditNoteReadiness(i);
+    if (problems.length) { setBlocked({ title: `A credit note for ${i.number} cannot be issued`, problems }); return; }
+    setDialog({ kind: "credit", number: i.number });
+  };
+  const printCredit = (i: Invoice, creditNumber: string) => {
+    setCreditPrint({ invoice: i, creditNumber });
+    window.setTimeout(() => window.print(), 80);
+  };
   const sendPayLink = async (i: Invoice) => {
     const email = customerByName(i.customer)?.email ?? "";
     // Nothing goes to a customer without a valid address and a real amount.
-    const problems: InvoiceProblem[] = [];
-    if (!/^\S+@\S+\.\S+$/.test(email.trim())) problems.push({ text: `${i.customer} has no valid billing email address.`, fixHref: customerHref(i.customer) });
+    const job = i.jobId ? ALL_JOBS.find(j => j.id === i.jobId) : undefined;
+    const problems: InvoiceProblem[] = job ? invoiceReadiness(job, i.stage?.index).problems : customerBillingProblems(i.customer);
     if (!(i.amount > 0)) problems.push({ text: "The invoice amount is zero." });
-    if (i.status === "Paid") problems.push({ text: "This invoice is already paid." });
+    if (i.status === "Void") problems.push({ text: "This invoice is void." });
+    if (i.balance <= 0 && i.status !== "Void") problems.push({ text: "This invoice has nothing left to pay." });
     if (problems.length) { setBlocked({ title: `${i.number} cannot be sent`, problems }); return; }
-    const res = await fetch("/api/public-links", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "invoice", ref: i.number, customer: i.customer, title: `Invoice ${i.number}`, email, taxPct: 0, lines: [], amount: outstanding(i) }) });
+    // The pay page reads the amount from the saved invoice ledger, never from this browser: save it first.
+    saveInvoiceLedger(i);
+    const res = await fetch("/api/public-links", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "invoice", ref: i.number, customer: i.customer, title: `Invoice ${i.number}`, email, taxPct: 0, lines: [] }) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { notify("Could not create the payment link", undefined, "info"); return; }
     if (data.emailed) { notify(`Payment link emailed to ${email}`); return; }
@@ -65,11 +94,7 @@ export default function BillingPage() {
     notify("Link created and copied. Email is not configured here, so share it by hand.", undefined, "info");
   };
   /** Raises the single invoice, or the next stage when the job is progress-billed. */
-  const raise = (j: JobRecord) => {
-    const stages = getWorkspace(j.id).stages;
-    if (!stages?.length) return generateInvoice(j.id);
-    return invoiceStage(j.id, stages.findIndex(s => !s.invoice))!;
-  };
+  const raise = (j: JobRecord) => raiseInvoice(j);
   const readiness = (j: JobRecord) => {
     const stages = getWorkspace(j.id).stages;
     return invoiceReadiness(j, stages?.length ? stages.findIndex(s => !s.invoice) : undefined);
@@ -126,15 +151,21 @@ export default function BillingPage() {
       cell: i => <span className={`text-table-cell whitespace-nowrap ${i.status === "Overdue" ? "text-[#EF4444] font-medium" : "text-[var(--text-body)]"}`}>{fmtDate(i.dueOn)}{i.status === "Overdue" && ` · ${Math.round((JOBS_TODAY_TS - i.dueOn) / DAY_MS)}d late`}</span>,
     },
     { key: "amount", header: "Amount", align: "right", cell: i => <span className="text-table-cell text-[var(--text-primary)]">{money(i.amount)}</span>, sortValue: i => i.amount },
-    { key: "out", header: "Outstanding", align: "right", cell: i => <span className="text-table-cell font-semibold text-[var(--text-primary)]">{outstanding(i) ? money(outstanding(i)) : "—"}</span>, sortValue: i => outstanding(i) },
-    { key: "status", header: "Status", cell: i => <Pill tone={INVOICE_TONE[i.status]}>{i.status}</Pill>, sortValue: i => (["Overdue", "Partially paid", "Sent", "Draft", "Paid"] as InvoiceStatus[]).indexOf(i.status) },
+    { key: "paid", header: "Paid", align: "right", cell: i => <span className="text-table-cell text-[var(--text-body)]">{i.paid ? usd(i.paid) : "—"}</span>, sortValue: i => i.paid },
+    { key: "out", header: "Balance", align: "right", cell: i => <span className="text-table-cell font-semibold text-[var(--text-primary)]">{outstanding(i) ? usd(outstanding(i)) : "—"}</span>, sortValue: i => outstanding(i) },
+    { key: "status", header: "Status", cell: i => <Pill tone={INVOICE_TONE[i.status]}>{i.status}</Pill>, sortValue: i => (["Overdue", "Partially paid", "Sent", "Draft", "Paid", "Void"] as InvoiceStatus[]).indexOf(i.status) },
     {
       key: "actions", header: "Actions", align: "right",
       cell: i => (
         <ActionMenu label={`Actions for ${i.number}`} actions={[
           ...(i.jobId ? [{ label: "Open job", icon: Wrench, onClick: () => router.push(`/jobs/${i.jobId}`) }] : []),
-          { label: "Record payment", icon: Money, disabled: i.status === "Paid", onClick: () => { recordPayment(i); refresh(); notify(`Payment recorded on ${i.number}`); } },
-          { label: "Send payment link", icon: PaperPlaneTilt, disabled: i.status === "Paid", onClick: () => sendPayLink(i) },
+          { label: "View details", icon: Info, onClick: () => setSelected(i.number) },
+          { label: "Record payment", icon: Money, disabled: i.status === "Void" || i.balance <= 0, onClick: () => setDialog({ kind: "pay", number: i.number }) },
+          { label: "Send payment link", icon: PaperPlaneTilt, disabled: i.status === "Void" || i.balance <= 0, onClick: () => sendPayLink(i) },
+          { label: "Credit note", icon: FileText, disabled: i.status === "Void" || i.balance <= 0, onClick: () => openCredit(i) },
+          i.status === "Void"
+            ? { label: i.reissuedAs ? `Reissued as ${i.reissuedAs}` : "Reissue invoice", icon: Receipt, disabled: !canManageMoney(role) || !!i.reissuedAs, onClick: () => setDialog({ kind: "reissue", number: i.number }), divider: true }
+            : { label: "Void invoice", icon: WarningCircle, danger: true, divider: true, disabled: !canManageMoney(role) || i.status === "Draft", onClick: () => setDialog({ kind: "void", number: i.number }) },
         ]} />
       ),
     },
@@ -170,18 +201,19 @@ export default function BillingPage() {
           </>
         } />
 
-      <KpiRow cols="xl:grid-cols-5">
+      <KpiRow cols="xl:grid-cols-6">
         <KpiTile label="Ready to invoice" value={money(ready.reduce((s, r) => s + r.charges.total, 0))} meta={`${ready.length} completed job${ready.length === 1 ? "" : "s"}`} tone="amber" icon={Receipt} active={tab === "jobs" && scope === "ready"} onClick={() => { setTab("jobs"); setScope("ready"); }} />
         <KpiTile label="Work in progress" value={money(accruing.reduce((s, r) => s + r.charges.total, 0))} meta={`${accruing.length} jobs accruing`} tone="blue" icon={Wrench} active={tab === "jobs" && scope === "accruing"} onClick={() => { setTab("jobs"); setScope("accruing"); }} />
-        <KpiTile label="Outstanding" value={money(open.reduce((s, i) => s + outstanding(i), 0))} meta={`${open.length} open invoices`} tone="purple" icon={CurrencyDollar} active={tab === "invoices" && invF === INV_STATUS[0]} onClick={() => { setTab("invoices"); setInvF(INV_STATUS[0]); }} />
-        <KpiTile label="Overdue" value={money(overdue.reduce((s, i) => s + outstanding(i), 0))} meta={`${overdue.length} invoices`} tone="red" icon={WarningCircle} active={tab === "invoices" && invF === "Overdue"} onClick={() => { setTab("invoices"); setInvF("Overdue"); }} />
+        <KpiTile label="Outstanding" value={money(totals.outstanding)} meta={`${totals.openCount} open invoices`} tone="purple" icon={CurrencyDollar} active={tab === "invoices" && invF === INV_STATUS[0]} onClick={() => { setTab("invoices"); setInvF(INV_STATUS[0]); }} />
+        <KpiTile label="Overdue" value={money(totals.overdue)} meta={`${totals.overdueCount} invoices`} tone="red" icon={WarningCircle} active={tab === "invoices" && invF === "Overdue"} onClick={() => { setTab("invoices"); setInvF("Overdue"); }} />
+        <KpiTile label="Collected" value={money(totals.collected)} meta={`${paidInvoices.length} paid in full`} tone="green" icon={CheckCircle} active={tab === "invoices" && invF === "Paid"} onClick={() => { setTab("invoices"); setInvF("Paid"); }} />
         <KpiTile label="Estimates out" value={money(pendingEst.reduce((s, e) => s + estimateTotal(e), 0))} meta={`${pendingEst.length} awaiting approval`} tone="gray" icon={FileText} active={tab === "estimates"} onClick={() => setTab("estimates")} />
       </KpiRow>
 
       <ListCard>
         <DetailTabs label="Billing views" active={tab} onChange={t => { setTab(t); setSearch(""); }} tabs={[
           { key: "jobs", label: "Billable jobs", count: ready.length },
-          { key: "invoices", label: "Invoices", count: open.length },
+          { key: "invoices", label: "Invoices", count: totals.openCount },
           { key: "estimates", label: "Estimates", count: pendingEst.length },
         ]} />
 
@@ -215,7 +247,7 @@ export default function BillingPage() {
               <SearchBox value={search} onChange={setSearch} placeholder="Search invoice, customer, job…" className="w-full sm:w-auto sm:flex-1 lg:flex-none lg:w-[300px]" />
               <FilterSelect value={invF} options={INV_STATUS} onChange={setInvF} className="flex-1 sm:flex-none min-w-[150px] sm:w-[170px]" />
             </div>
-            <DataTable columns={invCols} rows={invRows} rowKey={i => i.number} pageSize={10} noun="invoices" minWidth={1060}
+            <DataTable columns={invCols} rows={invRows} rowKey={i => i.number} onRowClick={i => setSelected(i.number)} pageSize={10} noun="invoices" minWidth={1140}
               defaultSort={{ key: "issued", dir: "desc" }}
               empty={{ icon: Receipt, title: "No invoices match", hint: "Try a different status or search" }}
               mobileCard={i => (
@@ -224,7 +256,7 @@ export default function BillingPage() {
                     <div className="min-w-0"><p className="m-0 text-label text-[var(--text-primary)]">{i.number} · {i.customer}</p><p className="m-0 text-caption text-[var(--text-muted)]">{i.jobRef} · due {fmtDate(i.dueOn)}</p></div>
                     <Pill tone={INVOICE_TONE[i.status]}>{i.status}</Pill>
                   </div>
-                  <p className="m-0 text-caption text-[var(--text-body)]">{money(i.amount)}{outstanding(i) ? ` · ${money(outstanding(i))} outstanding` : ""}</p>
+                  <p className="m-0 text-caption text-[var(--text-body)]">{money(i.amount)}{i.paid > 0 ? ` · ${usd(i.paid)} paid` : ""}{outstanding(i) ? ` · ${usd(outstanding(i))} balance` : ""}</p>
                 </div>
               )} />
           </>
@@ -250,6 +282,15 @@ export default function BillingPage() {
       <p className="m-0 flex items-center gap-2 text-caption text-[var(--text-muted)]">
         <Info size={14} /> Payments, credit notes and accounting exports are handled in <Link href="/integrations" className="text-blue-600 hover:underline">EVOQ Billing</Link>.
       </p>
+      <InvoiceDrawer inv={find(selected)} role={role} onClose={() => setSelected(null)}
+        onPay={i => setDialog({ kind: "pay", number: i.number })} onCredit={openCredit} onVoid={i => setDialog({ kind: "void", number: i.number })} onReissue={i => setDialog({ kind: "reissue", number: i.number })}
+        onPrintCredit={printCredit} onOpenInvoice={setSelected} />
+      {dialog?.kind === "pay" && dialogInv && <PaymentDialog key={dialogInv.number} inv={dialogInv} by={by} onClose={() => setDialog(null)} onDone={done} />}
+      {dialog?.kind === "credit" && dialogInv && <CreditNoteDialog key={dialogInv.number} inv={dialogInv} by={by} onClose={() => setDialog(null)} onDone={msg => done(msg)} />}
+      {dialog?.kind === "void" && dialogInv && <VoidDialog key={dialogInv.number} inv={dialogInv} role={role} by={by} onClose={() => setDialog(null)}
+        onDone={(msg, reissue) => { done(msg); if (reissue) setDialog({ kind: "reissue", number: dialogInv.number }); }} />}
+      {dialog?.kind === "reissue" && dialogInv && <ReissueDialog key={dialogInv.number} inv={dialogInv} role={role} by={by} onClose={() => setDialog(null)} onDone={done} />}
+      <CreditNoteSheet print={creditPrint} />
       <InvoiceBlockedDialog open={!!blocked} title={blocked?.title ?? ""} problems={blocked?.problems ?? []} onClose={() => setBlocked(null)} />
       {toastNode}
     </PageShell>

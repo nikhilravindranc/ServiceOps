@@ -4,8 +4,14 @@ import { existsSync, readFileSync } from "node:fs";
 // Deploys without AUTH_SECRET use the secret generated at build time by scripts/prepare-demo.mjs.
 const demoSecret = existsSync(".demo-secret") ? readFileSync(".demo-secret", "utf8").trim() : undefined;
 
+// The demo build step leaves a marker; it turns on the demo-only features (role switcher, test sign-in) in that build only.
+const demoBuild = existsSync(".demo-mode") && process.env.DEMO_MODE !== "0";
+
 const nextConfig: NextConfig = {
-  ...(!process.env.AUTH_SECRET && demoSecret ? { env: { AUTH_SECRET: demoSecret } } : {}),
+  env: {
+    ...(!process.env.AUTH_SECRET && demoSecret ? { AUTH_SECRET: demoSecret } : {}),
+    ...(demoBuild ? { DEMO_MODE: "1" } : {}),
+  },
   // Development and production builds use separate folders, so running one over the other cannot corrupt the cache.
   distDir: process.env.NODE_ENV === "production" ? ".next" : ".next-dev",
   // Contacts and accounts live under Customers; leads and deals are now requests and estimates.

@@ -1,4 +1,4 @@
-import { ESTIMATES, allInvoices, customerByName, outstanding, workOrderById, logWO, DAY_MS } from "@/lib/serviceData";
+import { ESTIMATES, allInvoices, customerByName, saveInvoiceLedger, customerBillingProblems, effectiveDepositPct, workOrderById, logWO, DAY_MS } from "@/lib/serviceData";
 
 export type AutomationRow = { key: "quote.followup" | "invoice.reminder" | "request.autoarchive"; enabled: boolean; afterDays: number; lastRunAt: string | null };
 export type RunResult = { estimates: number; invoices: number; archived: number };
@@ -23,7 +23,7 @@ export async function runAutomations(): Promise<RunResult> {
       const since = e.sentAt + (e.followUps ?? 0) * q.afterDays * DAY_MS;
       if (now - since < q.afterDays * DAY_MS) continue;
       const wo = workOrderById(e.woId);
-      const r = await post("/api/public-links", { kind: "estimate", ref: e.number, customer: e.customer, title: wo?.title ?? e.number, email: customerByName(e.customer)?.email ?? "", taxPct: 18, lines: e.lines, options: e.options, depositPct: e.depositPct });
+      const r = await post("/api/public-links", { kind: "estimate", ref: e.number, customer: e.customer, title: wo?.title ?? e.number, email: customerByName(e.customer)?.email ?? "", taxPct: 18, lines: e.lines, options: e.options, depositPct: effectiveDepositPct(e) });
       if (r.ok) { e.followUps = (e.followUps ?? 0) + 1; if (wo) logWO(wo, `Estimate ${e.number} follow-up sent automatically`); out.estimates++; }
     }
   }
@@ -31,10 +31,11 @@ export async function runAutomations(): Promise<RunResult> {
   const i = rule("invoice.reminder");
   if (i?.enabled) {
     for (const inv of allInvoices()) {
-      if (inv.status !== "Overdue") continue;
+      if (inv.status !== "Overdue" || customerBillingProblems(inv.customer).length) continue;
       const last = (inv as { remindedOn?: number }).remindedOn ?? 0;
       if (now - last < i.afterDays * DAY_MS) continue;
-      const r = await post("/api/public-links", { kind: "invoice", ref: inv.number, customer: inv.customer, title: `Invoice ${inv.number}`, email: customerByName(inv.customer)?.email ?? "", taxPct: 0, lines: [], amount: outstanding(inv) });
+      saveInvoiceLedger(inv); // the pay page reads the balance from saved data
+      const r = await post("/api/public-links", { kind: "invoice", ref: inv.number, customer: inv.customer, title: `Invoice ${inv.number}`, email: customerByName(inv.customer)?.email ?? "", taxPct: 0, lines: [] });
       if (r.ok) { (inv as { remindedOn?: number }).remindedOn = now; out.invoices++; }
     }
   }

@@ -4,9 +4,32 @@ import { sha256 } from "@/lib/tokens";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
 import { notify } from "@/lib/notify";
 import { charge, type Card } from "@/lib/payments";
+import { balanceOf, round2, sumPayments, type LedgerEntry } from "@/lib/ledger";
 
 async function find(token: string) {
   return db.publicLink.findUnique({ where: { tokenHash: sha256(token) } });
+}
+
+/**
+ * What the customer owes on an invoice, read from the company's saved invoice ledger. The amount never comes from the
+ * browser or from the link itself. Payments made through other links that the office has not applied yet are taken off,
+ * so an invoice cannot be paid twice. Null when the invoice has not been saved to the ledger.
+ */
+async function historicEntry(orgId: string, ref: string): Promise<LedgerEntry | null> {
+  const h = await db.workspaceEntity.findUnique({ where: { orgId_kind_key: { orgId, kind: "historicInvoices", key: ref } }, select: { json: true } });
+  if (!h) return null;
+  const inv = JSON.parse(h.json) as { amount: number; paid: number };
+  return { number: ref, amount: inv.amount, payments: inv.paid > 0 ? [{ id: `legacy-${ref}`, amount: inv.paid, method: "Other", reference: "", at: 0, recordedBy: "Imported" }] : [], credits: [] };
+}
+
+async function invoiceDue(orgId: string, ref: string): Promise<{ balance: number; total: number; paid: number; void: boolean } | null> {
+  const row = await db.workspaceEntity.findUnique({ where: { orgId_kind_key: { orgId, kind: "invoiceLedger", key: ref } }, select: { json: true } });
+  // A sample-history invoice nobody has changed yet has no ledger entry: its stored opening position is what is owed.
+  const entry: LedgerEntry | null = row ? JSON.parse(row.json) : await historicEntry(orgId, ref);
+  if (!entry) return null;
+  const links = await db.publicLink.findMany({ where: { orgId, kind: "invoice", ref, status: "paid" }, select: { id: true, paidAmount: true } });
+  const unapplied = links.filter(l => !entry.payments.some(p => p.id === `link-${l.id}`)).reduce((s, l) => s + (l.paidAmount ?? 0), 0);
+  return { balance: Math.max(0, round2(balanceOf(entry) - unapplied)), total: entry.amount, paid: round2(sumPayments(entry) + unapplied), void: !!entry.void };
 }
 
 /** What the customer sees. Nothing about other records or the organization beyond its name. */
@@ -14,8 +37,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
   if (!rateLimit(`link-get:${clientIp(req)}`, 60, 60_000)) return NextResponse.json({ error: "Too many requests." }, { status: 429 });
   const link = await find((await params).token);
   if (!link || link.expiresAt < new Date() && link.status === "open") return NextResponse.json({ error: "This link is invalid or has expired." }, { status: 404 });
-  const { email: _email, ...payload } = JSON.parse(link.payload);
-  return NextResponse.json({ kind: link.kind, ref: link.ref, status: link.status, chosenOption: link.chosenOption, signedName: link.signedName, signedAt: link.signedAt, ...payload });
+  const { email: _email, amount: _browserAmount, ...payload } = JSON.parse(link.payload);
+  const due = link.kind === "invoice" ? await invoiceDue(link.orgId, link.ref) : undefined;
+  const invoice = due === undefined ? {} : due === null ? { unavailable: true } : { amount: due.balance, total: due.total, paid: due.paid, void: due.void };
+  return NextResponse.json({ kind: link.kind, ref: link.ref, status: link.status, chosenOption: link.chosenOption, signedName: link.signedName, signedAt: link.signedAt, ...payload, ...invoice });
 }
 
 type Body = { action?: string; option?: string; name?: string; rating?: number; comment?: string; card?: Card };
@@ -72,7 +97,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   }
 
   if (b.action !== "pay") return NextResponse.json({ error: "Unknown action." }, { status: 400 });
-  const amount = cents(Number(payload.amount ?? 0));
+  // The amount is the invoice's balance in the saved company data, never a figure from the browser.
+  const due = await invoiceDue(link.orgId, link.ref);
+  if (!due) return NextResponse.json({ error: "This invoice is not ready for payment yet. Please contact the company." }, { status: 409 });
+  if (due.void) return NextResponse.json({ error: "This invoice has been cancelled." }, { status: 409 });
+  const amount = cents(due.balance);
+  if (!(amount > 0)) return NextResponse.json({ error: "Nothing is left to pay on this invoice." }, { status: 409 });
   if (!b.card) return NextResponse.json({ error: "Enter your card details." }, { status: 400 });
   const result = charge(b.card, amount);
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 402 });

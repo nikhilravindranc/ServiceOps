@@ -1,5 +1,6 @@
 import {
   CUSTOMERS, CONTACTS, ASSETS, SERVICE_HISTORY, WORK_ORDERS, ESTIMATES, PARTS, PART_REQUESTS, PART_RETURNS, HISTORIC_INVOICE_STORE,
+  INVOICE_LEDGER, PAYMENT_SETTINGS,
 } from "@/lib/serviceData";
 import { ALL_JOBS, JOB_EXTRAS, CUSTOMER_DIRECTORY, WORKSPACE_STORE } from "@/lib/jobsData";
 
@@ -13,7 +14,8 @@ const LISTS = {
   estimates: ESTIMATES, parts: PARTS, partRequests: PART_REQUESTS, partReturns: PART_RETURNS, jobs: ALL_JOBS,
   historicInvoices: HISTORIC_INVOICE_STORE,
 } as const;
-const MAPS = { jobExtras: JOB_EXTRAS, customerDirectory: CUSTOMER_DIRECTORY, workspaces: WORKSPACE_STORE } as const;
+// invoiceLedger: payments, credit notes and voids by invoice number. paymentSettings: the company's payment terms, deposit, staged billing and methods.
+const MAPS = { jobExtras: JOB_EXTRAS, customerDirectory: CUSTOMER_DIRECTORY, workspaces: WORKSPACE_STORE, invoiceLedger: INVOICE_LEDGER, paymentSettings: PAYMENT_SETTINGS } as const;
 
 type Snapshot = { [K in keyof typeof LISTS]?: unknown[] } & { [K in keyof typeof MAPS]?: Record<string, unknown> };
 

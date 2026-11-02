@@ -1,16 +1,26 @@
 "use client";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import Link from "next/link";
 import { signOut, useSession } from "next-auth/react";
 import { CaretLeft, SignOut } from "@phosphor-icons/react";
 import Logo from "@/components/ui/Logo";
 import SyncIndicator from "@/components/layout/SyncIndicator";
+import { reconcileMyJobs } from "@/lib/jobSync";
 
 /** Phone-first frame for the technician screens: a slim top bar and a single column of content. */
 export default function TechShell({ title, subtitle, back, right, children, footer }: {
   title: string; subtitle?: string; back?: string; right?: ReactNode; children: ReactNode; footer?: ReactNode;
 }) {
   const { data: session } = useSession();
+  // Every minute, and when the phone comes back to the screen, check that the office has not taken one of our jobs away.
+  const name = session?.user?.role === "Technician" ? session.user.name ?? "" : "";
+  useEffect(() => {
+    if (!name) return;
+    const check = () => { if (document.visibilityState === "visible") reconcileMyJobs(name).catch(() => {}); };
+    const first = setTimeout(check, 4000), timer = setInterval(check, 60_000);
+    document.addEventListener("visibilitychange", check);
+    return () => { clearTimeout(first); clearInterval(timer); document.removeEventListener("visibilitychange", check); };
+  }, [name]);
   return (
     <div className="min-h-screen bg-[var(--bg-page,var(--bg-card))] flex flex-col">
       <header className="sticky top-0 z-30 bg-[var(--bg-card)] border-b border-[var(--border-soft)] px-4 h-14 flex items-center gap-3">

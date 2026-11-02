@@ -5,7 +5,7 @@ import { PageShell, PageHeader } from "@/components/ui/ServiceOpsUI";
 import { CARD_SHADOW } from "@/components/dashboard/DashboardSection";
 import { ALL_JOBS } from "@/lib/jobsData";
 import {
-  allInvoices, outstanding, ESTIMATES, estimateTotal, WORK_ORDERS, jobCharges, workOrderForJob, billingStateForJob,
+  invoiceSummary, outstanding, ESTIMATES, estimateTotal, WORK_ORDERS, jobCharges, workOrderForJob, billingStateForJob,
   JOBS_TODAY_TS, DAY_MS, fmtDay, money,
 } from "@/lib/serviceData";
 
@@ -51,9 +51,9 @@ export default function InsightsPage() {
   }, []);
 
   const d = useMemo(() => {
-    const invoices = allInvoices();
-    const collected = sum(invoices.map(i => i.paid));
-    const open = invoices.filter(i => i.status !== "Paid");
+    const totals = invoiceSummary();
+    const collected = totals.collected;
+    const open = totals.open;
 
     // Revenue by where the work came from, using completed jobs linked to a work order.
     const bySource = new Map<string, number>();
@@ -86,7 +86,7 @@ export default function InsightsPage() {
     });
 
     return {
-      billed: sum(invoices.map(i => i.amount)), collected, outstanding: sum(open.map(outstanding)),
+      billed: totals.billed, collected, outstanding: totals.outstanding,
       sources: [...bySource].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value),
       cash, funnel, forecast,
       winRate: decided.length ? Math.round((approved.length / decided.length) * 100) : null,

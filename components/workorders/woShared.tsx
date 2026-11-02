@@ -20,7 +20,7 @@ export const WO_STATUS_TONE: Record<WOStatus, PillTone> = {
 };
 
 export const ESTIMATE_TONE: Record<EstimateStatus, PillTone> = { Draft: "gray", Sent: "amber", Approved: "green", Declined: "red" };
-export const INVOICE_TONE: Record<InvoiceStatus, PillTone> = { Draft: "gray", Sent: "blue", "Partially paid": "amber", Paid: "green", Overdue: "red" };
+export const INVOICE_TONE: Record<InvoiceStatus, PillTone> = { Draft: "gray", Sent: "blue", "Partially paid": "amber", Paid: "green", Overdue: "red", Void: "gray" };
 
 export function WOStatusPill({ wo }: { wo: WorkOrder }) {
   const s = woStatus(wo);

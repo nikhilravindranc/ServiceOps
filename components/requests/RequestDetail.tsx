@@ -151,7 +151,7 @@ export default function RequestDetail({ number }: { number: string }) {
               <ChainRow label="Estimate" done={!!estimate} number={estimate?.number} href={wo ? `/work-orders/${wo.id}` : undefined} status={estimate?.status} tone={estimate?.status === "Approved" ? "green" : estimate?.status === "Declined" ? "red" : "amber"} />
               <ChainRow label="Work order" done={!!wo} number={wo?.number} href={wo ? `/work-orders/${wo.id}` : undefined} status={wo ? woStatus(wo) : undefined} tone="blue" />
               {jobs.length ? jobs.map(j => <ChainRow key={j.id} label="Job" done number={j.jobId} href={`/jobs/${j.id}`} status={j.status} tone="blue" />) : <ChainRow label="Job" done={false} />}
-              {invoices.length ? invoices.map(i => <ChainRow key={i.number} label="Invoice" done number={i.number} href={i.jobId ? `/jobs/${i.jobId}` : "/billing"} status={i.status} tone={i.status === "Paid" ? "green" : i.status === "Overdue" ? "red" : "amber"} />) : <ChainRow label="Invoice" done={false} />}
+              {invoices.length ? invoices.map(i => <ChainRow key={i.number} label="Invoice" done number={i.number} href={i.jobId ? `/jobs/${i.jobId}` : "/billing"} status={i.status} tone={i.status === "Paid" ? "green" : i.status === "Void" ? "gray" : i.status === "Overdue" ? "red" : "amber"} />) : <ChainRow label="Invoice" done={false} />}
             </ul>
             {req.status === "Declined" && <p className="m-0 mt-3 text-caption text-[var(--text-muted)]">This request was declined, so nothing follows it.</p>}
             {open && <p className="m-0 mt-3 text-caption text-[var(--text-muted)]">Convert the request to start the chain: work order, estimate, job and invoice all keep this request number as their reference.</p>}

@@ -8,10 +8,15 @@
  */
 import { type WorkType } from "@/lib/workTypes";
 import {
+  PAYMENT_METHODS, canManageMoney, sumPayments, sumCredits, balanceOf, heldCredit, statusOf, checkPayment, addPayment, checkCredit, addCreditNote,
+  nextCreditNumber, checkVoid, voidEntry, reissueNumber, lineTotal, checkLines, invoiceTotals, round2, stageAmounts,
+  type InvoiceStatus, type LedgerEntry, type Payment, type PaymentMethod, type CreditNote, type VoidInfo, type InvoiceLine, type StageAmount,
+} from "@/lib/ledger";
+import {
   ALL_JOBS, DOC_YEAR, CUSTOMER_DIRECTORY, CUSTOMER_LOCATIONS, JOBS_TODAY, JOB_EXTRAS, PRODUCT_MODELS, TECHNICIANS,
   TECHNICIAN_AVATARS, TECHNICIAN_PHONES, TECHNICIAN_TITLES, SLA_HOURS_BY_SERVICE, createJob, updateJob,
-  getWorkspace, logActivity, technicianEmail,
-  type JobRecord, type JobPriority, type ServiceType, type JobStatus,
+  getWorkspace, logActivity, technicianEmail, vanUsed, generateInvoice, invoiceStage, registerJobTotal,
+  type JobInvoice, type JobRecord, type JobPriority, type ServiceType, type JobStatus,
 } from "@/lib/jobsData";
 
 // ─────────────────────────────────────────────
@@ -855,6 +860,7 @@ export function dispatchAlerts(fromDay: number, days = 4) {
     const away = techAvailability(j.technician, j.scheduledAt);
     if (away === "On leave" || away === "Off today") out.push({ job: j, reason: `${j.technician} is ${away.toLowerCase()} — reassign`, tone: "red" });
     else if (j.slaBreached) out.push({ job: j, reason: "SLA breached — escalate or expedite", tone: "red" });
+    else if (j.status === "Incomplete" && getWorkspace(j.id).outcome?.followUp) continue; // the office has already decided what happens next
     else if (j.status === "Incomplete") out.push({ job: j, reason: "Incomplete — book a return visit", tone: "amber" });
   }
   return out.sort((a, b) => a.job.scheduledAt - b.job.scheduledAt);
@@ -995,8 +1001,10 @@ export function setEstimateStatus(e: Estimate, status: EstimateStatus) {
   logWO(wo, `Estimate ${e.number} ${status.toLowerCase()}`);
 }
 
-export type InvoiceStatus = "Draft" | "Sent" | "Partially paid" | "Paid" | "Overdue";
-export interface Invoice {
+export type { InvoiceStatus } from "@/lib/ledger";
+
+/** What the historic sample invoices store. Payments live in the ledger; `paid` is only the opening position. */
+export interface BaseInvoice {
   number: string;
   customer: string;
   jobRef: string;
@@ -1010,13 +1018,65 @@ export interface Invoice {
   status: InvoiceStatus;
 }
 
+/** An invoice as every screen sees it: amounts and status always computed from its payments and credit notes. */
+export interface Invoice extends Omit<BaseInvoice, "paid" | "status"> {
+  /** Money received so far (refunds already taken off). */
+  paid: number;
+  /** Credit notes issued against it. */
+  credited: number;
+  /** What the customer still owes: amount - paid - credited. */
+  balance: number;
+  status: InvoiceStatus;
+  payments: Payment[];
+  credits: CreditNote[];
+  void?: VoidInfo;
+  /** Customer credit held on a void invoice. */
+  heldCredit: number;
+  reissueOf?: string;
+  reissuedAs?: string;
+  lines?: InvoiceLine[]; taxPct?: number; discount?: number;
+  /** Progress billing: this invoice is one stage. `adjustment` is what earlier stages missed, carried onto this one. */
+  stage?: { index: number; label: string; pct: number; base: number; adjustment: number };
+  /** Deposit already received, shown as a payment on the invoice. */
+  deposit: number;
+  draft?: boolean;
+}
+
 const TERMS_DAYS: Record<Customer["paymentTerms"], number> = { "Net 15": 15, "Net 30": 30, "Net 45": 45 };
 
-function buildInvoices(): Invoice[] {
-  const out: Invoice[] = [];
+// ── Company payment settings (Settings, Payments) ──
+export interface PaymentSettings {
+  /** Terms for a customer that has none. */
+  terms: Customer["paymentTerms"];
+  depositOn: boolean; depositPct: number;
+  stagedOn: boolean; stagedPlan: string;
+  methods: PaymentMethod[];
+}
+const DEFAULT_PAYMENT_SETTINGS: PaymentSettings = { terms: "Net 30", depositOn: false, depositPct: 30, stagedOn: false, stagedPlan: "Deposit and final (30 / 70)", methods: [...PAYMENT_METHODS] };
+/** Saved with the company data (one record, key "company"). */
+export const PAYMENT_SETTINGS: Record<string, Partial<PaymentSettings>> = {};
+export const paymentSettings = (): PaymentSettings => ({ ...DEFAULT_PAYMENT_SETTINGS, ...PAYMENT_SETTINGS.company });
+/** Only a Service manager or Administrator changes how the company takes payment. Returns why not, or null. */
+export function savePaymentSettings(role: string | undefined, patch: Partial<PaymentSettings>): string | null {
+  if (!canManageMoney(role)) return "Only a Service manager or Administrator can change payment settings.";
+  const next = { ...paymentSettings(), ...patch };
+  if (!(next.depositPct >= 0 && next.depositPct <= 100)) return "The deposit must be between 0 and 100%.";
+  if (!next.methods.length) return "Allow at least one payment method.";
+  PAYMENT_SETTINGS.company = next;
+  return null;
+}
+/** Deposit share of an estimate: its own setting if it has one, otherwise the company default (when switched on). */
+export const effectiveDepositPct = (e: Pick<Estimate, "depositPct">) => e.depositPct ?? (paymentSettings().depositOn ? paymentSettings().depositPct : 0);
+const termsOf = (c?: Customer) => c?.paymentTerms ?? paymentSettings().terms;
+
+/** Every invoice's payments, credit notes and void, by invoice number. Saved with the company data. */
+export const INVOICE_LEDGER: Record<string, LedgerEntry> = {};
+
+function buildInvoices(): BaseInvoice[] {
+  const out: BaseInvoice[] = [];
   for (const v of SERVICE_HISTORY) {
     const cust = customerByName(v.customer);
-    const terms = TERMS_DAYS[cust?.paymentTerms ?? "Net 30"];
+    const terms = TERMS_DAYS[termsOf(cust)];
     const issued = v.date + DAY_MS;
     const due = issued + terms * DAY_MS;
     const seed = Number(v.jobRef.slice(4));
@@ -1034,82 +1094,216 @@ function buildInvoices(): Invoice[] {
   return out;
 }
 
-const HISTORIC_INVOICES: Invoice[] = buildInvoices();
+const HISTORIC_INVOICES: BaseInvoice[] = buildInvoices();
 export const HISTORIC_INVOICE_STORE = HISTORIC_INVOICES;
 
-export type BillingState = "Not billable yet" | "Ready to invoice" | "Invoiced" | "Paid" | "Not billable";
+export type BillingState = "Not billable yet" | "Ready to invoice" | "Invoiced" | "Paid" | "Voided" | "Not billable";
 
-/** Billing state for a live job — reads the Job Details workspace so a generated invoice shows up here. */
+// ── Building the invoice list ──
+/** An invoice before its payments are applied: where it comes from (a job, a stage, the sample history, a reissue). */
+interface RawInvoice extends Pick<Invoice, "number" | "customer" | "jobRef" | "jobId" | "woNumber" | "issuedOn" | "dueOn" | "amount" | "lines" | "taxPct" | "discount" | "stage" | "reissueOf"> {
+  /** Payments the sample data implies and the ledger does not hold yet (an old "paid" mark, the sample history). */
+  legacy: Payment[];
+}
+
+const legacyPayment = (number: string, amount: number, at: number, reference = "Before the payment ledger"): Payment[] =>
+  amount > 0 ? [{ id: `legacy-${number}`, amount, method: "Other", reference, at, recordedBy: "Imported" }] : [];
+
+/** Invoices raised against one job: its single invoice or its stages, and any reissues. Not yet priced for payments. */
+function rawInvoicesForJob(job: JobRecord): RawInvoice[] {
+  const ws = getWorkspace(job.id);
+  const cust = customerByName(job.customer);
+  const woNumber = workOrderForJob(job.id)?.number;
+  const dueIn = (issued: number) => issued + TERMS_DAYS[termsOf(cust)] * DAY_MS;
+  const out: RawInvoice[] = [];
+  if (ws.stages?.length) {
+    const amounts = stageAmounts(jobCharges(job).total, ws.stages.map(s => s.pct), ws.stages.map(s => s.invoice?.amount === undefined ? undefined : { amount: s.invoice.amount, adjustment: s.invoice.adjustment }));
+    ws.stages.forEach((s, i) => {
+      if (!s.invoice) return;
+      const issued = job.scheduledAt + DAY_MS / 2 + i * 7 * DAY_MS;
+      const a = amounts[i];
+      out.push({
+        number: s.invoice.number, customer: job.customer, jobRef: job.jobId, jobId: job.id, woNumber, issuedOn: issued, dueOn: dueIn(issued),
+        amount: a.amount, stage: { index: i, label: s.label, pct: s.pct, base: a.base, adjustment: a.adjustment },
+        legacy: legacyPayment(s.invoice.number, s.paidOn ? a.amount : 0, s.paidOn ?? issued),
+      });
+    });
+  } else {
+    const issued = job.scheduledAt + DAY_MS / 2;
+    const raised = ws.invoice;
+    // Sample jobs that were completed long ago count as invoiced and paid, as they always have.
+    const implied = !raised && job.status === "Completed" && job.id % 3 !== 0;
+    if (raised || implied) {
+      const number = raised?.number ?? `INV-${job.jobId.replace(/\D/g, "")}`;
+      const amount = raised?.amount ?? jobCharges(job).total;
+      out.push({
+        number, customer: job.customer, jobRef: job.jobId, jobId: job.id, woNumber, issuedOn: issued, dueOn: dueIn(issued), amount,
+        legacy: implied ? legacyPayment(number, amount, issued + DAY_MS, "Sample history") : legacyPayment(number, ws.paidOn && !ws.payment ? amount : 0, ws.paidOn ?? issued),
+      });
+    }
+  }
+  // Reissues of this job's invoices are saved in the ledger with everything an invoice needs.
+  for (const e of Object.values(INVOICE_LEDGER)) if (e.reissueOf && e.jobId === job.id) out.push(rawFromEntry(e));
+  return out;
+}
+
+function rawFromEntry(e: LedgerEntry): RawInvoice {
+  return {
+    number: e.number, customer: e.customer ?? "", jobRef: e.jobRef ?? "", jobId: e.jobId, woNumber: e.woNumber, issuedOn: e.issuedOn ?? TODAY, dueOn: e.dueOn ?? TODAY,
+    amount: e.amount, lines: e.lines, taxPct: e.taxPct, discount: e.discount, reissueOf: e.reissueOf, legacy: [],
+    stage: e.stage ? { ...e.stage, base: e.amount, adjustment: 0 } : undefined,
+  };
+}
+
+/** Applies payments to a raw invoice. `extra` are payments derived from elsewhere (deposit, on-site payment) not in the ledger yet. */
+function finish(raw: RawInvoice, extra: Payment[] = []): Invoice {
+  const e = INVOICE_LEDGER[raw.number];
+  const own = e ? e.payments : raw.legacy;
+  const payments = [...own, ...extra.filter(x => !own.some(p => p.id === x.id))].sort((a, b) => a.at - b.at);
+  const credits = e?.credits ?? [];
+  const amount = e?.amount ?? raw.amount;
+  const ledger = { amount, payments, credits, void: e?.void };
+  const { legacy: _legacy, ...base } = raw;
+  return {
+    ...base, amount, payments, credits, void: e?.void, reissuedAs: e?.reissuedAs, draft: e?.draft,
+    paid: sumPayments(ledger), credited: sumCredits(ledger), balance: balanceOf(ledger), heldCredit: heldCredit(ledger),
+    status: statusOf(ledger, raw.dueOn, TODAY, e?.draft), deposit: payments.filter(p => p.kind === "deposit").reduce((s, p) => s + p.amount, 0),
+  };
+}
+
+/** Invoices of the jobs on one work order, with the deposit and any on-site payment applied once, first invoice first. */
+function invoicesForJobs(jobs: JobRecord[]): Invoice[] {
+  const raws = jobs.flatMap(rawInvoicesForJob);
+  const wo = jobs[0] ? workOrderForJob(jobs[0].id) : undefined;
+  const est = wo ? estimateForWO(wo.id) : undefined;
+  const entries = Object.values(INVOICE_LEDGER);
+  const extras = new Map<string, Payment[]>(raws.map(r => [r.number, []]));
+  // Money that is not in a ledger entry yet is not "received" twice: what the ledger already holds counts as applied.
+  const due = (r: RawInvoice) => {
+    const v = finish(r, extras.get(r.number));
+    return v.void ? 0 : v.balance;
+  };
+  if (est?.depositPaid && wo) {
+    let left = est.depositPaid - entries.filter(e => e.woNumber === wo.number).flatMap(e => e.payments).filter(p => p.kind === "deposit" && p.amount > 0).reduce((s, p) => s + p.amount, 0);
+    for (const r of raws) {
+      if (r.reissueOf || left <= 0) continue;
+      const take = Math.min(left, due(r));
+      if (take <= 0) continue;
+      extras.get(r.number)!.push({ id: `dep-${est.number}:${r.number}`, amount: round2(take), method: "Card (test)", reference: `Deposit received on ${est.number}`, at: est.approval?.at ?? r.issuedOn, recordedBy: est.approval?.via === "office" ? "Office" : "Customer (approval link)", kind: "deposit" });
+      left -= take;
+    }
+  }
+  for (const job of jobs) {
+    const pay = getWorkspace(job.id).payment;
+    if (!pay || pay.method === "Pay later" || !(pay.amount > 0)) continue;
+    const prefix = `onsite-${job.id}:`;
+    let left = pay.amount - entries.filter(e => e.jobId === job.id).flatMap(e => e.payments).filter(p => p.id.startsWith(prefix)).reduce((s, p) => s + p.amount, 0);
+    for (const r of raws.filter(x => x.jobId === job.id && !x.reissueOf)) {
+      const take = Math.min(left, due(r));
+      if (take <= 0) continue;
+      const method = (PAYMENT_METHODS as readonly string[]).includes(pay.method) ? pay.method as PaymentMethod : "Other";
+      extras.get(r.number)!.push({ id: `${prefix}${r.number}`, amount: round2(take), method, reference: pay.reference || "Paid on site", at: pay.atMs ?? r.issuedOn, recordedBy: job.technician });
+      left -= take;
+    }
+  }
+  return raws.map(r => finish(r, extras.get(r.number)));
+}
+
+/** The work order's other jobs matter because one deposit is shared between the invoices of its jobs. */
+function jobGroup(job: JobRecord): JobRecord[] {
+  const wo = workOrderForJob(job.id);
+  return wo ? woJobs(wo) : [job];
+}
+
+export const invoicesForJob = (jobId: number): Invoice[] => {
+  const job = ALL_JOBS.find(j => j.id === jobId);
+  return job ? invoicesForJobs(jobGroup(job)).filter(i => i.jobId === jobId) : [];
+};
+
+/** Billing state for a live job — reads the Job Details workspace and the ledger so a generated invoice shows up here. */
 export function billingStateForJob(jobId?: number): BillingState {
   const job = jobId ? ALL_JOBS.find(j => j.id === jobId) : undefined;
   if (!job) return "Not billable";
   if (job.status === "Cancelled") return "Not billable";
-  const stages = getWorkspace(job.id).stages;
-  if (stages?.length) {
-    if (stages.some(s => !s.invoice)) return "Ready to invoice";
-    return stages.every(s => s.paidOn) ? "Paid" : "Invoiced";
+  const ws = getWorkspace(job.id);
+  const stages = ws.stages;
+  if (stages?.length && stages.some(s => !s.invoice)) return "Ready to invoice";
+  if (!stages?.length) {
+    if (job.status !== "Completed") return "Not billable yet";
+    if (!ws.invoice && job.id % 3 === 0) return "Ready to invoice";
   }
-  if (job.status !== "Completed") return "Not billable yet";
-  if (getWorkspace(job.id).invoice) return getWorkspace(job.id).paidOn ? "Paid" : "Invoiced";
-  return job.id % 3 === 0 ? "Ready to invoice" : "Paid";
+  const invoices = invoicesForJob(job.id);
+  const active = invoices.filter(i => i.status !== "Void");
+  if (invoices.length && !active.length) return "Voided";
+  return active.every(i => i.status === "Paid") ? "Paid" : "Invoiced";
+}
+
+/** Payment status of a job as Job Details shows it, following its invoices. */
+export function jobPaymentStatus(job: JobRecord): "Paid" | "Partially paid" | "Overdue" | "Pending" | "Voided" | "N/A" {
+  if (job.status === "Cancelled") return "N/A";
+  const invoices = invoicesForJob(job.id);
+  const active = invoices.filter(i => i.status !== "Void");
+  if (invoices.length && !active.length) return "Voided";
+  if (!active.length) return job.status === "Completed" && job.id % 3 !== 0 ? "Paid" : "Pending";
+  if (active.every(i => i.status === "Paid")) return "Paid";
+  if (active.some(i => i.status === "Overdue")) return "Overdue";
+  return active.some(i => i.paid > 0) ? "Partially paid" : "Pending";
 }
 
 /** All invoices — historic ones plus any raised against live jobs. */
 export function allInvoices(): Invoice[] {
   const live: Invoice[] = [];
+  const seen = new Set<number>();
   for (const job of ALL_JOBS) {
-    const stages = getWorkspace(job.id).stages;
-    if (stages?.length) {
-      const cust = customerByName(job.customer);
-      stages.forEach((s, i) => {
-        if (!s.invoice) return;
-        const amount = stageAmount(job, i);
-        const issued = job.scheduledAt + DAY_MS / 2 + i * 7 * DAY_MS;
-        live.push({
-          number: s.invoice.number, customer: job.customer, jobRef: job.jobId, jobId: job.id, woNumber: workOrderForJob(job.id)?.number,
-          issuedOn: issued, dueOn: issued + TERMS_DAYS[cust?.paymentTerms ?? "Net 30"] * DAY_MS,
-          amount, paid: s.paidOn ? amount : 0, status: s.paidOn ? "Paid" : "Sent",
-        });
-      });
-      continue;
-    }
-    const state = billingStateForJob(job.id);
-    if (state !== "Invoiced" && state !== "Paid") continue;
-    const cust = customerByName(job.customer);
-    const total = jobCharges(job).total;
-    const issued = job.scheduledAt + DAY_MS / 2;
-    live.push({
-      number: getWorkspace(job.id).invoice?.number ?? `INV-${job.jobId.replace(/\D/g, "")}`,
-      customer: job.customer, jobRef: job.jobId, jobId: job.id, woNumber: workOrderForJob(job.id)?.number,
-      issuedOn: issued, dueOn: issued + TERMS_DAYS[cust?.paymentTerms ?? "Net 30"] * DAY_MS,
-      amount: total, paid: state === "Paid" ? total : 0, status: state === "Paid" ? "Paid" : "Sent",
-    });
+    if (seen.has(job.id)) continue;
+    const group = jobGroup(job);
+    group.forEach(j => seen.add(j.id));
+    live.push(...invoicesForJobs(group));
   }
-  return [...live, ...HISTORIC_INVOICES].sort((a, b) => b.issuedOn - a.issuedOn);
+  const reissuedElsewhere = Object.values(INVOICE_LEDGER).filter(e => e.reissueOf && !ALL_JOBS.some(j => j.id === e.jobId)).map(e => finish(rawFromEntry(e)));
+  // A sample-history invoice for a job that now has its own live invoice with the same number is that same invoice: show it once,
+  // so the ledger (keyed by invoice number) never serves two rows.
+  const liveNumbers = new Set([...live, ...reissuedElsewhere].map(i => i.number));
+  const historic = HISTORIC_INVOICES.filter(h => !liveNumbers.has(h.number)).map(h => finish({
+    number: h.number, customer: h.customer, jobRef: h.jobRef, jobId: h.jobId, woNumber: h.woNumber, issuedOn: h.issuedOn, dueOn: h.dueOn, amount: h.amount,
+    legacy: legacyPayment(h.number, h.paid, h.issuedOn + DAY_MS, "Before the payment ledger"),
+  }));
+  return [...live, ...reissuedElsewhere, ...historic].sort((a, b) => b.issuedOn - a.issuedOn);
 }
 
-/** The amount of one stage of a progress-billed job; the last stage takes any rounding difference. */
-export function stageAmount(job: JobRecord, index: number): number {
+/**
+ * The one place Outstanding, Overdue, Billed and Collected come from, so Home, Insights, Reports and Billing always agree.
+ * Outstanding and Overdue are balances (after payments and credit notes); void and draft invoices are left out.
+ */
+export const invoiceSummary = (list: Invoice[] = allInvoices()) => invoiceTotals(list);
+
+/** The share of a job's total that a progress-billing stage carries, including any difference from earlier stages. */
+export function stageAmountFor(job: JobRecord, index: number): StageAmount {
   const stages = getWorkspace(job.id).stages ?? [];
-  const total = jobCharges(job).total;
-  const before = stages.slice(0, index).reduce((s, st) => s + Math.round(total * st.pct / 100), 0);
-  return index === stages.length - 1 ? total - before : Math.round(total * (stages[index]?.pct ?? 0) / 100);
+  return stageAmounts(jobCharges(job).total, stages.map(s => s.pct), stages.map(s => s.invoice?.amount === undefined ? undefined : { amount: s.invoice.amount, adjustment: s.invoice.adjustment }))[index];
+}
+/** The amount of one stage of a progress-billed job. An invoiced stage keeps the amount it was invoiced with. */
+export const stageAmount = (job: JobRecord, index: number): number => stageAmountFor(job, index)?.amount ?? 0;
+
+/** What must be true of the customer before anything goes to them: nothing blank, nothing wrong. */
+export function customerBillingProblems(name: string): { text: string; fixHref?: string }[] {
+  const cust = customerByName(name);
+  if (!cust) return [{ text: `${name} is not in Customers, so there is no billing record.` }];
+  const fix = customerHref(cust.name);
+  const problems: { text: string; fixHref?: string }[] = [];
+  if (!/^\S+@\S+\.\S+$/.test(cust.email.trim())) problems.push({ text: "The customer has no valid billing email address.", fixHref: fix });
+  if (!cust.street.trim() || !cust.cityLine.trim()) problems.push({ text: "The customer has no billing address.", fixHref: fix });
+  if (!cust.paymentTerms) problems.push({ text: "The customer has no payment terms.", fixHref: fix });
+  return problems;
 }
 
 /** What must be true before an invoice can be raised or sent: nothing blank, nothing wrong. Returns the problems found. */
 export function invoiceReadiness(job: JobRecord, stageIndex?: number): { ok: boolean; problems: { text: string; fixHref?: string }[] } {
   const problems: { text: string; fixHref?: string }[] = [];
-  const cust = customerByName(job.customer);
-  const fix = cust ? customerHref(cust.name) : undefined;
   const stages = getWorkspace(job.id).stages;
   const earlyStage = stageIndex !== undefined && !!stages && stageIndex < stages.length - 1;
   if (job.status !== "Completed" && !earlyStage) problems.push({ text: `The job is ${job.status.toLowerCase()}; only completed jobs can be invoiced.`, fixHref: `/jobs/${job.id}` });
-  if (!cust) problems.push({ text: `${job.customer} is not in Customers, so there is no billing record.` });
-  else {
-    if (!/^\S+@\S+\.\S+$/.test(cust.email.trim())) problems.push({ text: "The customer has no valid billing email address.", fixHref: fix });
-    if (!cust.street.trim() || !cust.cityLine.trim()) problems.push({ text: "The customer has no billing address.", fixHref: fix });
-    if (!cust.paymentTerms) problems.push({ text: "The customer has no payment terms.", fixHref: fix });
-  }
+  problems.push(...customerBillingProblems(job.customer));
   if (!job.technician?.trim() || job.technician === "Unassigned") problems.push({ text: "No technician is recorded on the job.", fixHref: `/jobs/${job.id}` });
   if (!workOrderForJob(job.id)) problems.push({ text: "The job is not linked to a work order.", fixHref: `/jobs/${job.id}` });
   const c = jobCharges(job);
@@ -1123,7 +1317,7 @@ export function invoiceDocument(job: JobRecord) {
   const cust = customerByName(job.customer);
   const wo = workOrderForJob(job.id);
   const issuedOn = job.scheduledAt + DAY_MS / 2;
-  const terms = cust?.paymentTerms ?? "Net 30";
+  const terms = termsOf(cust);
   return {
     issuedOn, terms, dueOn: issuedOn + TERMS_DAYS[terms] * DAY_MS,
     woNumber: wo?.number ?? "", requestNumber: wo?.requestNumber ?? "",
@@ -1132,15 +1326,139 @@ export function invoiceDocument(job: JobRecord) {
 }
 
 export const invoicesFor = (customer: string) => allInvoices().filter(i => i.customer === customer);
-export const outstanding = (i: Invoice) => i.amount - i.paid;
+/** What the customer still owes on this invoice (its balance). */
+export const outstanding = (i: Pick<Invoice, "balance">) => i.balance;
+export const invoiceByNumber = (number: string) => allInvoices().find(i => i.number === number);
 
-export function recordPayment(inv: Invoice) {
-  const h = HISTORIC_INVOICES.find(x => x.number === inv.number);
-  if (h) { h.paid = h.amount; h.status = "Paid"; }
-  const stage = inv.jobId ? getWorkspace(inv.jobId).stages?.find(s => s.invoice?.number === inv.number) : undefined;
-  if (stage) { stage.paidOn = Date.now(); return; }
-  if (inv.jobId) getWorkspace(inv.jobId).paidOn = Date.now();
+// ── Changing the ledger ──
+/** The saved ledger entry for an invoice, created from what the invoice shows now (amount kept as it is, derived payments included). */
+function commit(inv: Invoice): LedgerEntry {
+  let e = INVOICE_LEDGER[inv.number];
+  if (!e) {
+    e = INVOICE_LEDGER[inv.number] = {
+      number: inv.number, amount: inv.amount, payments: [], credits: [], customer: inv.customer, jobRef: inv.jobRef, jobId: inv.jobId, woNumber: inv.woNumber,
+      issuedOn: inv.issuedOn, dueOn: inv.dueOn, lines: inv.lines, taxPct: inv.taxPct, discount: inv.discount, reissueOf: inv.reissueOf,
+      stage: inv.stage ? { index: inv.stage.index, label: inv.stage.label, pct: inv.stage.pct } : undefined,
+    };
+  }
+  for (const p of inv.payments) if (!e.payments.some(x => x.id === p.id)) e.payments.push(p);
+  return e;
 }
+/** Saves the invoice's ledger now. The customer pay page reads the balance from the saved data, so call this before sending a link. */
+export const saveInvoiceLedger = (inv: Invoice) => { commit(inv); };
+
+/** Records a payment received for an invoice. Returns why it cannot be recorded, or null. */
+export function recordPayment(inv: Invoice, input: { amount: number; method: string; reference: string; at?: number }, by: string): string | null {
+  const allowed = paymentSettings().methods;
+  const err = checkPayment(inv, input, allowed);
+  if (err) return err;
+  const at = input.at ?? Date.now();
+  addPayment(commit(inv), { ...input, at, by }, allowed);
+  if (inv.jobId) logActivity(inv.jobId, `Payment of $${round2(input.amount).toFixed(2)} recorded on ${inv.number} (${input.method})`);
+  return null;
+}
+
+/** A payment the customer made through the pay link. Applied once per link, never above the balance. */
+export function applyLinkPayment(number: string, linkId: string, amount: number, reference: string, at: number): boolean {
+  const inv = invoiceByNumber(number);
+  const id = `link-${linkId}`;
+  if (!inv || inv.payments.some(p => p.id === id) || inv.void) return false;
+  const take = Math.min(round2(amount), inv.balance);
+  if (take <= 0) return false;
+  const e = commit(inv);
+  const note = take < amount ? `${reference} (customer paid $${round2(amount).toFixed(2)}: refund the extra)` : reference;
+  e.payments.push({ id, amount: take, method: "Card (test)", reference: note, at, recordedBy: "Customer (pay link)" });
+  return true;
+}
+
+export function creditNoteReadiness(inv: Invoice) { return customerBillingProblems(inv.customer); }
+
+/** Issues a credit note (CN-xxxxx) against an invoice: no more than its remaining balance, with a reason. */
+export function addInvoiceCredit(inv: Invoice, input: { amount: number; reason: string }, by: string): { error: string } | { number: string } {
+  const err = checkCredit(inv, input);
+  if (err) return { error: err };
+  const problems = creditNoteReadiness(inv);
+  if (problems.length) return { error: problems.map(p => p.text).join(" ") };
+  const number = nextCreditNumber(Object.values(INVOICE_LEDGER).flatMap(e => e.credits.map(c => c.number)));
+  addCreditNote(commit(inv), { ...input, by, at: Date.now() }, number);
+  if (inv.jobId) logActivity(inv.jobId, `Credit note ${number} of $${round2(input.amount).toFixed(2)} issued against ${inv.number}: ${input.reason.trim()}`);
+  return { number };
+}
+
+/** Voids an invoice (Service manager or Administrator only, with a reason). It stays in the list as Void. */
+export function voidInvoice(inv: Invoice, input: { reason: string; role: string; outcome?: "credit" | "refund" }, by: string): string | null {
+  const err = checkVoid(inv, input, !!inv.draft);
+  if (err) return err;
+  voidEntry(commit(inv), { ...input, by, at: Date.now() });
+  if (inv.jobId) logActivity(inv.jobId, `Invoice ${inv.number} voided by ${by}: ${input.reason.trim()}`);
+  return null;
+}
+
+/** What stops a corrected invoice going to the customer. Same checks as raising any invoice. */
+export function reissueReadiness(inv: Invoice): { text: string; fixHref?: string }[] {
+  const job = inv.jobId ? ALL_JOBS.find(j => j.id === inv.jobId) : undefined;
+  return job ? invoiceReadiness(job, inv.stage?.index).problems : customerBillingProblems(inv.customer);
+}
+
+/** The items a reissue starts from: what the job bills now, or the invoice's own items. */
+export function reissueDraft(inv: Invoice): { lines: InvoiceLine[]; taxPct: number; discount: number } {
+  if (inv.lines?.length) return { lines: inv.lines.map(l => ({ ...l })), taxPct: inv.taxPct ?? 0, discount: inv.discount ?? 0 };
+  const job = inv.jobId ? ALL_JOBS.find(j => j.id === inv.jobId) : undefined;
+  if (job && !inv.stage) { const c = jobCharges(job); return { lines: [{ item: "Labour charges", qty: 1, rate: c.labor }, ...c.parts.map(p => ({ ...p }))], taxPct: 18, discount: c.discount }; }
+  return { lines: [{ item: inv.stage ? `${job?.jobName ?? inv.jobRef}: ${inv.stage.label}` : `Service ${inv.jobRef}`, qty: 1, rate: inv.amount }], taxPct: 0, discount: 0 };
+}
+
+/**
+ * Creates the corrected invoice for a void one: a new number linked to the original (INV-10481-R1), with the corrected
+ * items. Credit held on the original moves to the new invoice (up to its amount).
+ */
+export function reissueInvoice(inv: Invoice, input: { lines: InvoiceLine[]; taxPct: number; discount: number }, role: string, by: string): { error: string } | { invoice: Invoice } {
+  if (!canManageMoney(role)) return { error: "Only a Service manager or Administrator can reissue an invoice." };
+  if (!inv.void) return { error: "Only a void invoice can be reissued." };
+  if (inv.reissuedAs) return { error: `Already reissued as ${inv.reissuedAs}.` };
+  const problems = reissueReadiness(inv);
+  if (problems.length) return { error: problems.map(p => p.text).join(" ") };
+  const bad = checkLines(input.lines, input.taxPct, input.discount);
+  if (bad.length) return { error: bad.join(" ") };
+  const amount = lineTotal(input.lines, input.taxPct, input.discount);
+  const number = reissueNumber(inv.number, [...allInvoices().map(i => i.number), ...Object.keys(INVOICE_LEDGER)]);
+  const issuedOn = Date.now();
+  const cust = customerByName(inv.customer);
+  const old = commit(inv);
+  const fresh: LedgerEntry = {
+    number, amount, payments: [], credits: [], customer: inv.customer, jobRef: inv.jobRef, jobId: inv.jobId, woNumber: inv.woNumber,
+    issuedOn, dueOn: issuedOn + TERMS_DAYS[termsOf(cust)] * DAY_MS, lines: input.lines.map(l => ({ ...l, item: l.item.trim() })), taxPct: input.taxPct, discount: input.discount,
+    reissueOf: inv.number, stage: inv.stage ? { index: inv.stage.index, label: inv.stage.label, pct: inv.stage.pct } : undefined,
+  };
+  const move = Math.min(heldCredit(old), amount);
+  if (move > 0) {
+    old.payments.push({ id: `move-${number}-out`, amount: -move, method: "Other", reference: `Credit moved to ${number}`, at: issuedOn, recordedBy: by, kind: "transfer" });
+    fresh.payments.push({ id: `move-${number}-in`, amount: move, method: "Other", reference: `Credit from ${inv.number}`, at: issuedOn, recordedBy: by, kind: "transfer" });
+  }
+  old.reissuedAs = number;
+  INVOICE_LEDGER[number] = fresh;
+  if (inv.jobId) logActivity(inv.jobId, `Invoice ${inv.number} reissued as ${number}`);
+  return { invoice: finish(rawFromEntry(fresh)) };
+}
+
+/**
+ * Raises the invoice of a job (or its next progress-billing stage) and saves its ledger: the amount is kept as it is,
+ * the deposit paid at estimate approval and any payment the technician took on site are applied. Technician screens
+ * can call this instead of `generateInvoice`; calling `generateInvoice` alone still works, and the payment is
+ * applied the first time the invoice is changed or sent.
+ */
+export function raiseInvoice(job: JobRecord): JobInvoice {
+  const stages = getWorkspace(job.id).stages;
+  const raised = stages?.length ? invoiceStage(job.id, stages.findIndex(s => !s.invoice))! : generateInvoice(job.id);
+  const inv = invoicesForJob(job.id).find(i => i.number === raised.number);
+  if (inv) commit(inv);
+  return raised;
+}
+
+/** Payment status of one invoice for printing: "Paid", "Partially paid ($x of $y)"… */
+export const invoicePaymentLabel = (i: Invoice) => (i.status === "Partially paid" ? `Partially paid (${money(i.paid)} of ${money(i.amount)})` : i.status === "Sent" || i.status === "Overdue" ? "Unpaid" : i.status);
+
+registerJobTotal(id => { const j = ALL_JOBS.find(x => x.id === id); return j ? jobCharges(j).total : 0; });
 
 // ─────────────────────────────────────────────
 //  Parts + inventory (field-service view)
@@ -1224,7 +1542,9 @@ function buildParts(): Part[] {
 
 export const PARTS: Part[] = buildParts();
 export const partByName = (name: string) => PARTS.find(p => p.name === name);
-export const techStockTotal = (p: Part) => Object.values(p.techStock).reduce((s, q) => s + q, 0);
+/** What is in one technician's van now: the starting quantity minus what their jobs have used from it. Never negative. */
+export const vanStock = (p: Part, technician: string) => Math.max(0, (p.techStock[technician] ?? 0) - vanUsed(p.partNo, technician));
+export const techStockTotal = (p: Part) => Object.keys(p.techStock).reduce((s, t) => s + vanStock(p, t), 0);
 export const available = (p: Part) => Math.max(0, p.onHand - p.reserved);
 
 /** Parts the next 7 days of open jobs will need, with the jobs that need them. */
@@ -1344,8 +1664,7 @@ export function customerStats(c: Customer) {
   const lastService = doneDates.length ? Math.max(...doneDates) : null;
   const nextVisit = activeJobs.map(j => j.scheduledAt).sort((a, b) => a - b)[0] ?? null;
   const invoices = invoicesFor(c.name);
-  const balance = invoices.reduce((s, i) => s + outstanding(i), 0);
-  const overdue = invoices.filter(i => i.status === "Overdue").reduce((s, i) => s + outstanding(i), 0);
+  const { outstanding: balance, overdue } = invoiceSummary(invoices);
   return { wos, openWOs, jobs, activeJobs, assets, history, lastService, nextVisit, invoices, balance, overdue };
 }
 
@@ -1360,7 +1679,7 @@ export function addCustomer(input: {
     street: input.street.trim(), cityLine: `${input.city.trim()}, ${input.state.trim().toUpperCase()} ${input.zip.trim()}`.trim(),
     territory: input.state.toUpperCase() === "NJ" ? "Mid-Atlantic" : input.state.toUpperCase() === "CT" ? "New England" : "North East",
     zone: input.zone, phone: input.phone.trim() || "—", email: input.email.trim(), customerSince: `${MONTHS[JOBS_TODAY.getMonth()]} ${JOBS_TODAY.getFullYear()}`,
-    paymentTerms: input.plan === "Pay per visit" ? "Net 15" : "Net 30", accountManager: "Alex Morgan", accessNotes: "",
+    paymentTerms: input.plan === "Pay per visit" ? "Net 15" : paymentSettings().terms, accountManager: "Alex Morgan", accessNotes: "",
   };
   CUSTOMERS.unshift(c);
   if (input.contactName.trim()) {
