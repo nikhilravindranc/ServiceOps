@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import Button from "@mui/material/Button";
@@ -31,6 +31,19 @@ export default function DispatchMap({ jobs, queue, selId, zoneOk, isDark, onSele
   const map = useRef<L.Map | null>(null);
   const layer = useRef<L.LayerGroup | null>(null);
   const fitted = useRef(false);
+  const live = useRef<L.LayerGroup | null>(null);
+  const [positions, setPositions] = useState<{ userId: string; name: string; lat: number; lng: number; at: string }[]>([]);
+
+  // Technicians who opted in to share their location (fresh within 15 minutes); refreshed every 20 s.
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try { const r = await fetch("/api/location", { cache: "no-store" }); const d = r.ok ? await r.json() : null; if (alive) setPositions(d?.positions ?? []); } catch { /* keep the last positions */ }
+    };
+    load();
+    const t = setInterval(load, 20_000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
 
   // Per-technician stops for the day, in current visiting order.
   const routes = useMemo(() => {
@@ -56,9 +69,10 @@ export default function DispatchMap({ jobs, queue, selId, zoneOk, isDark, onSele
     L.tileLayer(token ? `https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/{z}/{x}/{y}@2x?access_token=${token}` : "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
       { maxZoom: 18, attribution: token ? "© Mapbox © OpenStreetMap" : "© OpenStreetMap contributors" }).addTo(m);
     layer.current = L.layerGroup().addTo(m);
+    live.current = L.layerGroup().addTo(m);
     map.current = m;
     setTimeout(() => m.invalidateSize(), 50);
-    return () => { m.remove(); map.current = null; layer.current = null; fitted.current = false; };
+    return () => { m.remove(); map.current = null; layer.current = null; live.current = null; fitted.current = false; };
   }, []);
 
   useEffect(() => {
@@ -93,6 +107,18 @@ export default function DispatchMap({ jobs, queue, selId, zoneOk, isDark, onSele
 
     if (!fitted.current && pts.length > 1) { m.fitBounds(L.latLngBounds(pts), { padding: [30, 30], maxZoom: 12 }); fitted.current = true; }
   }, [routes, queue, selId, zoneOk, jobs, onSelect]);
+
+  // Live technician layer: a pulsing green marker per technician who is sharing.
+  useEffect(() => {
+    const g = live.current;
+    if (!g) return;
+    g.clearLayers();
+    for (const p of positions) {
+      const mins = Math.max(0, Math.round((Date.now() - new Date(p.at).getTime()) / 60000));
+      L.marker([p.lat, p.lng], { zIndexOffset: 1000, icon: L.divIcon({ className: "", iconSize: [20, 20], html: `<div style="width:18px;height:18px;border-radius:50%;background:#16A34A;border:3px solid #fff;box-shadow:0 0 0 4px rgba(22,163,74,.35)"></div>` }) })
+        .bindTooltip(`${p.name} (live)<br>${mins < 1 ? "just now" : `${mins} min ago`}`).addTo(g);
+    }
+  }, [positions]);
 
   // Dark mode: invert the tile layer only, so markers keep their colours.
   useEffect(() => {

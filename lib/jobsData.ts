@@ -473,6 +473,8 @@ export interface JobAttachment { id: string; name: string; size: string }
 export interface JobPart       { item: string; qty: number; rate: number }
 export interface JobActivity   { label: string; at: string }
 export interface JobInvoice    { number: string; generatedAt: string }
+export interface JobSignature  { name: string; dataUrl: string; at: string }
+export interface JobPayment    { method: string; amount: number; reference: string; at: string }
 /** One instalment of a progress-billed job: a share of the job total, invoiced on its own. */
 export interface BillingStage { label: string; pct: number; invoice: JobInvoice | null; paidOn?: number }
 export const BILLING_PLANS: Record<string, { label: string; pct: number }[]> = {
@@ -492,6 +494,15 @@ export interface JobWorkspace {
   /** Entries logged by user actions, appended after the derived history. */
   activity: JobActivity[];
   invoice: JobInvoice | null;
+  /** Technician screen: ticks for the service-type checklist (lib/checklists.ts), by position. */
+  checks?: boolean[];
+  /** Customer sign-off on completion. */
+  signature?: JobSignature;
+  /** Work timer: started by "Start work", stopped on completion. */
+  workStartedAt?: number;
+  workEndedAt?: number;
+  /** Payment taken on site. */
+  payment?: JobPayment;
   /** Progress billing: when set, the job is invoiced in these stages instead of one invoice. */
   stages?: BillingStage[];
   /** Set once the invoice has been paid (recorded in the office or through a payment link). */
@@ -698,6 +709,40 @@ export function invoiceStage(id: number, index: number): JobInvoice | null {
   stage.invoice = { number: `INV-${job?.jobId.replace(/^\D+-/, "") ?? id}-${index + 1}`, generatedAt: nowStamp() };
   logActivity(id, `Invoice ${stage.invoice.number} generated (${stage.label}, ${stage.pct}%)`);
   return stage.invoice;
+}
+
+export function setJobCheck(id: number, index: number, size: number, value: boolean): void {
+  const ws = getWorkspace(id);
+  const checks = ws.checks ? [...ws.checks] : [];
+  while (checks.length < size) checks.push(false);
+  checks[index] = value;
+  ws.checks = checks;
+}
+
+export function startJobWork(id: number): void {
+  const ws = getWorkspace(id);
+  if (ws.workStartedAt) return;
+  ws.workStartedAt = Date.now();
+  logActivity(id, "Work started");
+}
+
+export function finishJobWork(id: number): void {
+  const ws = getWorkspace(id);
+  if (!ws.workStartedAt) ws.workStartedAt = Date.now();
+  ws.workEndedAt = Date.now();
+  logActivity(id, `Work completed (${Math.max(1, Math.round((ws.workEndedAt - ws.workStartedAt) / 60000))} min on site)`);
+}
+
+export function setJobSignature(id: number, name: string, dataUrl: string): void {
+  getWorkspace(id).signature = { name: name.trim(), dataUrl, at: nowStamp() };
+  logActivity(id, `Customer sign-off by ${name.trim()}`);
+}
+
+export function recordJobPayment(id: number, payment: Omit<JobPayment, "at">): void {
+  const ws = getWorkspace(id);
+  ws.payment = { ...payment, at: nowStamp() };
+  if (payment.method !== "Pay later") ws.paidOn = Date.now();
+  logActivity(id, `Payment of $${Math.round(payment.amount).toLocaleString("en-US")} recorded (${payment.method})`);
 }
 
 export function setJobChecklist(id: number, checklist: boolean[]): void {

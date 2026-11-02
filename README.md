@@ -25,6 +25,11 @@ Five roles: Administrator, Service manager, Dispatcher, Service coordinator, Tec
 ## Requests, work orders and invoices
 A request carries a work type (Installation, Service, Maintenance, Repair, Inspection) with its own questions, plus the trade (HVAC, Electrical, ...). Converting it creates a work order that keeps the request number; the request page shows the chain request, estimate, work order, job, invoice. An invoice is only raised or sent when nothing on it would be blank or wrong (`invoiceReadiness` in `lib/serviceData.ts`). Large jobs can be billed in stages (progress billing).
 
+## Technician app (Stage 2.3)
+Technicians land on `/tech` (phone-first). Today's visits show one next action: On my way, I've arrived, Start work, Complete job. Each job has a checklist tied to its trade (required steps and SOPs in `lib/checklists.ts`), photos, parts used, notes, a work timer, customer signature, on-site payment, a drafted invoice and a printable service report. A job can only be completed when the required steps are done and the customer has signed. Technicians may save changes to their own jobs only (enforced in `app/api/workspace/route.ts`).
+
+The app is installable (manifest and service worker, production builds) and works offline: changes queue on the device (IndexedDB) and sync when the connection returns; the header shows the sync state. Location sharing is opt-in, limited to working hours, and customers only see an "On the way" card while the technician is en route (`lib/location.ts`, `/api/location`, `/api/portal/track`).
+
 ## Email and social sign-in
 Without `RESEND_API_KEY`, verification links, reset links and sign-in codes are printed in the server console and shown on screen in development. Google and Microsoft sign-in need the client IDs in `.env.example`.
 

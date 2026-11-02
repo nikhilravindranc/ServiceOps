@@ -28,6 +28,8 @@ export default auth(req => {
   if (!user.onboarded && user.role === "Administrator" && pathname !== "/onboarding" && !pathname.startsWith("/api/")) {
     return NextResponse.redirect(new URL("/onboarding", req.url));
   }
+  // Technicians work from their own phone-first screen.
+  if (user.role === "Technician" && pathname === "/") return NextResponse.redirect(new URL("/tech", req.url));
   // Screens a role may not open send the person home with a notice.
   if (!pathname.startsWith("/api/") && !isPublicPage(pathname) && !canOpen(user.role, pathname)) {
     return NextResponse.redirect(new URL("/?denied=1", req.url));
@@ -36,5 +38,5 @@ export default auth(req => {
 });
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|api/demo/|favicon\\.ico|logo\\.png|.*\\.svg|.*\\.png).*)"],
+  matcher: ["/((?!sw\\.js|manifest\\.webmanifest|offline\\.html|_next/static|_next/image|api/demo/|favicon\\.ico|logo\\.png|.*\\.svg|.*\\.png).*)"],
 };

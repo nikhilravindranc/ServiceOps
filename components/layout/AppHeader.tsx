@@ -15,6 +15,8 @@ import { HeaderSearch, MobileSearch } from "./GlobalSearch";
 import { useTheme } from "@/components/ThemeContext";
 import { signOut, useSession } from "next-auth/react";
 import CreateMenu from "./CreateMenu";
+import SyncIndicator from "./SyncIndicator";
+import { clearOfflineCaches } from "@/components/SwRegister";
 import { useLayout } from "@/components/LayoutContext";
 
 const EXPANDED_W = "260px";
@@ -127,7 +129,7 @@ function UserMenu({
         </MenuItem>
 
         <MenuItem
-          onClick={() => signOut({ callbackUrl: "/login" })}
+          onClick={async () => { await clearOfflineCaches(); signOut({ callbackUrl: "/login" }); }}
           sx={{
             gap: 2, px: "14px", py: "10px", fontSize: "0.875rem", fontWeight: 500,
             color: isDark ? "#EF4444" : "#EF4444", borderRadius: "10px",
@@ -258,6 +260,7 @@ export default function AppHeader() {
 
         {/* Dark / Light toggle */}
         <CreateMenu />
+        <SyncIndicator />
         <ThemeToggleButton isDark={isDark} onToggle={toggleTheme} />
 
         {/* Notifications */}
@@ -306,6 +309,7 @@ export default function AppHeader() {
         <div className="flex-1" />
         <HeaderSearch isDark={isDark} />
         <CreateMenu />
+        <SyncIndicator />
         <ThemeToggleButton isDark={isDark} onToggle={toggleTheme} />
         <Tooltip title="3 unread notifications">
           <IconButton size="small" sx={{ borderRadius: "8px" }}>
@@ -370,6 +374,7 @@ export default function AppHeader() {
 
         {/* Dark / Light toggle */}
         <CreateMenu />
+        <SyncIndicator />
         <ThemeToggleButton isDark={isDark} onToggle={toggleTheme} />
 
         {/* Notifications */}

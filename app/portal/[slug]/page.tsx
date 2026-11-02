@@ -1,5 +1,6 @@
 "use client";
 import { use, useCallback, useEffect, useState, type ReactNode } from "react";
+import TrackCard from "@/components/portal/TrackCard";
 import AuthCard, { authButton, authInput } from "@/components/auth/AuthCard";
 
 type Data = {
@@ -8,6 +9,7 @@ type Data = {
   estimates: { number: string; status: string; total: number }[];
   invoices: { number: string; amount: number; due: number; status: string }[];
   reviewsGiven: number;
+  trackJobs?: number[];
 };
 const money = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 const TYPES = ["HVAC", "Mechanical", "Plumbing", "Electrical", "Preventive", "Elevator"];
@@ -94,6 +96,8 @@ export default function PortalPage({ params }: { params: Promise<{ slug: string 
   return (
     <AuthCard wide title={`Welcome, ${data.customer.name}`} subtitle={data.company}>
       {error && <p className="mb-3 px-3 py-2 rounded-xl text-[12.5px] font-medium text-red-700" style={{ background: "#FEF2F2", border: "1px solid #FECACA" }}>{error}</p>}
+
+      {(data.trackJobs ?? []).map(id => <TrackCard key={id} job={id} />)}
 
       {waiting.length > 0 && <Section title="Estimates waiting for you">
         {waiting.map(e => <div key={e.number} className="flex items-center justify-between gap-3 py-2 border-b border-[#EEE] text-[13px]"><span><b>{e.number}</b> · {money(e.total)}</span><button type="button" className="font-bold text-[#B45309]" onClick={() => go("estimate-link", e.number)}>Review and approve</button></div>)}

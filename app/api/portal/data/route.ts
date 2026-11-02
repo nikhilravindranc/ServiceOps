@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getPortalSession, loadSnapshot } from "@/lib/portalAuth";
+import { isToday } from "@/lib/location";
 
 type Job = { id: number; status: string };
 function woStatus(base: string, jobIds: number[], jobs: Job[]) {
@@ -27,7 +28,10 @@ export async function GET() {
     .map(e => ({ number: e.number, status: e.status, total: Math.round((e.options?.length && e.status === "Sent" ? (e.options[1] ?? e.options[0]).lines : e.lines).reduce((t, l) => t + l.qty * l.rate, 0) * 1.18) }));
   const invoices = (snap.historicInvoices ?? []).filter(i => i.customer === customer.name)
     .map(i => ({ number: i.number, amount: i.amount, due: i.amount - i.paid, status: i.status })).slice(0, 50);
+  // Visits today whose technician is on the way: the portal shows a tracking card for each (the track route re-checks everything).
+  const trackJobs = org.locationSharing ? (jobs as (Job & { customer?: string; scheduledAt?: number })[])
+    .filter(j => j.customer === customer.name && j.status === "En route" && typeof j.scheduledAt === "number" && isToday(j.scheduledAt, org.timezone)).map(j => j.id).slice(0, 5) : [];
   const reviews = await db.review.count({ where: { orgId: s.orgId, customer: customer.name } });
 
-  return NextResponse.json({ company: org.name, slug: org.slug, bookingEnabled: org.bookingEnabled, customer: { name: customer.name }, workOrders, estimates, invoices, reviewsGiven: reviews });
+  return NextResponse.json({ company: org.name, slug: org.slug, bookingEnabled: org.bookingEnabled, customer: { name: customer.name }, workOrders, estimates, invoices, reviewsGiven: reviews, trackJobs });
 }

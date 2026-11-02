@@ -1,4 +1,5 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
+import SwRegister from "@/components/SwRegister";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import ThemeRegistry from "@/components/ThemeRegistry";
@@ -21,6 +22,16 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "ServiceOps",
   description: "Schedule, dispatch, track and invoice field work in one place.",
+  manifest: "/manifest.webmanifest",
+  applicationName: "ServiceOps",
+  appleWebApp: { capable: true, title: "ServiceOps", statusBarStyle: "default" },
+  icons: { icon: [{ url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }, { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" }], apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }] },
+};
+
+export const viewport: Viewport = {
+  themeColor: [{ media: "(prefers-color-scheme: light)", color: "#F59E0B" }, { media: "(prefers-color-scheme: dark)", color: "#111111" }],
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({
@@ -32,6 +43,7 @@ export default function RootLayout({
     <html lang="en" className={inter.variable} style={{ fontFamily: "var(--font-inter)" }} suppressHydrationWarning>
       <head><script dangerouslySetInnerHTML={{ __html: LAYOUT_BOOT_SCRIPT + BRAND_BOOT_SCRIPT }} /></head>
       <body suppressHydrationWarning>
+        <SwRegister />
         <AuthProvider>
           <LayoutProvider>
           <WorkspaceProvider>

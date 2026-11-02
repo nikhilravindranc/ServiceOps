@@ -3,6 +3,11 @@ import { db } from "@/lib/db";
 import { OFFICE, requireUser } from "@/lib/api";
 
 const MAX_BYTES = 8 * 1024 * 1024;
+
+/** Technicians save the records of the jobs they work on (status, checklist, photos, notes, parts, signature) and nothing else. */
+const TECH_KINDS = new Set(["jobs", "workspaces", "jobExtras", "partRequests", "partReturns", "history"]);
+const TECH_JOB_KINDS = new Set(["jobs", "workspaces", "jobExtras"]);
+const canSave = (role: string) => OFFICE.includes(role) || role === "Technician";
 const BATCH = 400;
 
 type Change = [kind: string, key: string, baseVersion: number, json: string];
@@ -24,7 +29,7 @@ export async function GET() {
     rows: rows.map(x => [x.kind, x.key, x.version, x.json]),
     legacyJson: legacy?.json ?? null,
     sampleData: org?.sampleData ?? true,
-    canWrite: OFFICE.includes(r.user.role),
+    canWrite: canSave(r.user.role),
   });
 }
 
@@ -33,8 +38,9 @@ export async function GET() {
  * meantime it is not overwritten, and their copy is returned so the browser can show it. Other records save normally.
  */
 export async function PUT(req: Request) {
-  const r = await requireUser(OFFICE);
+  const r = await requireUser();
   if ("error" in r) return r.error;
+  if (!canSave(r.user.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const raw = await req.text();
   if (raw.length > MAX_BYTES) return NextResponse.json({ error: "Too much to save at once." }, { status: 413 });
   let body: { changes?: Change[]; deletes?: Delete[] };
@@ -44,6 +50,20 @@ export async function PUT(req: Request) {
   if (![...changes, ...deletes].every(c => typeof c[0] === "string" && typeof c[1] === "string" && typeof c[2] === "number")) return NextResponse.json({ error: "Invalid save." }, { status: 400 });
 
   const orgId = r.user.orgId;
+
+  if (r.user.role === "Technician") {
+    const all = [...changes, ...deletes];
+    const name = (r.user.name ?? "").trim();
+    // Only job-related collections, and only records of jobs assigned to this technician.
+    if (all.some(c => !(TECH_KINDS.has(c[0]) || (c[0] === "__order" && TECH_KINDS.has(c[1]))))) return NextResponse.json({ error: "Technicians can only save job records." }, { status: 403 });
+    const jobIds = [...new Set(all.filter(c => TECH_JOB_KINDS.has(c[0])).map(c => c[1]))];
+    if (jobIds.length) {
+      const jobs = await db.workspaceEntity.findMany({ where: { orgId, kind: "jobs", key: { in: jobIds } }, select: { key: true, json: true } });
+      const mine = new Set(jobs.filter(j => { try { return JSON.parse(j.json).technician === name; } catch { return false; } }).map(j => j.key));
+      if (jobIds.some(id => !mine.has(id))) return NextResponse.json({ error: "You can only save changes to jobs assigned to you." }, { status: 403 });
+    }
+    if (deletes.some(d => TECH_JOB_KINDS.has(d[0]))) return NextResponse.json({ error: "Technicians cannot delete jobs." }, { status: 403 });
+  }
   const existing = new Map((await db.workspaceEntity.findMany({ where: { orgId }, select: { kind: true, key: true, version: true } })).map(x => [`${x.kind}\u0000${x.key}`, x.version]));
   const versions: [string, string, number][] = [];
   const conflicts: string[][] = [];

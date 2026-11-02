@@ -25,6 +25,13 @@ const nextConfig: NextConfig = {
       { source: "/comms", destination: "/", permanent: false },
     ];
   },
+  // The service worker is served from the root with no HTTP caching so updates are picked up; the manifest revalidates.
+  async headers() {
+    return [
+      { source: "/sw.js", headers: [{ key: "Cache-Control", value: "no-store, max-age=0" }, { key: "Service-Worker-Allowed", value: "/" }, { key: "Content-Type", value: "application/javascript; charset=utf-8" }] },
+      { source: "/manifest.webmanifest", headers: [{ key: "Cache-Control", value: "public, max-age=0, must-revalidate" }, { key: "Content-Type", value: "application/manifest+json" }] },
+    ];
+  },
   // Demo deploys ship a pre-seeded SQLite file built at deploy time (see lib/db.ts).
   outputFileTracingIncludes: { "/**": ["./prisma/demo.db"] },
   experimental: {

@@ -35,6 +35,7 @@ model Organization {
   geoRadiusM     Int?
   geofenceMode   String   @default("flag") // flag | block: what happens to a clock-in/out outside the work area
   arrivalWindowMins Int   @default(120)  // length of the arrival window promised to customers
+  locationSharing Boolean @default(true) // company switch: technicians may share live location (each one still opts in)
   createdAt      DateTime @default(now())
 
   users    User[]
@@ -295,4 +296,19 @@ model GeoCache {
   lat       Float
   lng       Float
   createdAt DateTime @default(now())
+}
+
+// Latest few positions per technician who opted in to live location sharing. Older rows are deleted on every write.
+model TechLocation {
+  id       String   @id @default(cuid())
+  orgId    String
+  userId   String
+  userName String
+  jobId    Int?     // the live job id (lib/jobsData) the technician is travelling to, when known
+  lat      Float
+  lng      Float
+  accuracy Float?
+  at       DateTime @default(now())
+
+  @@index([orgId, userId, at])
 }
