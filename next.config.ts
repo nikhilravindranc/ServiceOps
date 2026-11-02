@@ -20,6 +20,8 @@ const nextConfig: NextConfig = {
       { source: "/comms", destination: "/", permanent: false },
     ];
   },
+  // Demo deploys ship a pre-seeded SQLite file built at deploy time (see lib/db.ts).
+  outputFileTracingIncludes: { "/**": ["./prisma/demo.db"] },
   experimental: {
     optimizePackageImports: [
       "@phosphor-icons/react",
