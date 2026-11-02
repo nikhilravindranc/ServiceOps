@@ -2,6 +2,8 @@ import type { NextAuthConfig } from "next-auth";
 
 /** Edge-safe part of the Auth.js config (no database access) — shared with the middleware. */
 export const authConfig = {
+  secret: process.env.AUTH_SECRET,
+  trustHost: true,
   pages: { signIn: "/login" },
   session: { strategy: "jwt", maxAge: 60 * 60 * 24 * 7 },
   providers: [],

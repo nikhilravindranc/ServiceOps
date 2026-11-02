@@ -10,3 +10,4 @@ COLOR_IMPLEMENTATION_STATUS.md
 *.tsbuildinfo
 *.db
 *.db-journal
+.demo-secret

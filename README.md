@@ -16,6 +16,9 @@ npm run dev                 # http://localhost:3100
 
 Sign in with `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` from `.env`.
 
+## Deploying to Vercel (demo)
+Push to git; no dashboard settings are needed. `npm run vercel-build` (`scripts/prepare-demo.mjs`) builds a seeded SQLite database and a per-deployment auth secret. At runtime the database is copied to `/tmp`, so data resets when the server restarts. Default demo login: `demo@serviceops.dev` / `ServiceOps-Demo-2026`. Set `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` or `AUTH_SECRET` in Vercel to override. Replace SQLite with Postgres before real use.
+
 ## Email and social sign-in
 Without `RESEND_API_KEY`, verification links, reset links and sign-in codes are printed in the server console and shown on screen in development. Google and Microsoft sign-in need the client IDs in `.env.example`.
 

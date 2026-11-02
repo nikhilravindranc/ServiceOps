@@ -2,7 +2,7 @@
  * Email adapter. With RESEND_API_KEY set it sends through Resend; otherwise it logs the message to the
  * server console and reports `delivered: false` so callers can show the link in development.
  */
-export const appUrl = () => process.env.APP_URL ?? "http://localhost:3100";
+export const appUrl = () => process.env.APP_URL ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3100");
 
 export async function sendMail(to: string, subject: string, text: string): Promise<{ delivered: boolean }> {
   const key = process.env.RESEND_API_KEY;

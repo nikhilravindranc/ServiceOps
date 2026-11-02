@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
+import { existsSync, readFileSync } from "node:fs";
+
+// Deploys without AUTH_SECRET use the secret generated at build time by scripts/prepare-demo.mjs.
+const demoSecret = existsSync(".demo-secret") ? readFileSync(".demo-secret", "utf8").trim() : undefined;
 
 const nextConfig: NextConfig = {
+  ...(!process.env.AUTH_SECRET && demoSecret ? { env: { AUTH_SECRET: demoSecret } } : {}),
   // Development and production builds use separate folders, so running one over the other cannot corrupt the cache.
   distDir: process.env.NODE_ENV === "production" ? ".next" : ".next-dev",
   // Contacts and accounts live under Customers; leads and deals are now requests and estimates.

@@ -29,4 +29,4 @@ export function read(token: string, kind: Claims["kind"]): Claims | null {
 }
 
 export const TEST_CLIENTS = { google: "test-google", "microsoft-entra-id": "test-microsoft" } as const;
-export const baseUrl = () => process.env.APP_URL ?? "http://localhost:3100";
+export const baseUrl = () => process.env.APP_URL ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3100");
