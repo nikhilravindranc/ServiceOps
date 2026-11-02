@@ -25,9 +25,10 @@ import {
 } from "@/components/ui/ServiceOpsUI";
 import { WO_STATUS_TONE, ESTIMATE_TONE, JobStatusPill } from "@/components/workorders/woShared";
 import { useJobFieldSx } from "@/components/jobs/jobFormStyles";
-import { TECHNICIAN_AVATARS, TECHNICIAN_TITLES, formatFileSize, type JobPriority } from "@/lib/jobsData";
+import { detailPairs } from "@/lib/workTypes";
+import { DOC_YEAR, TECHNICIAN_AVATARS, TECHNICIAN_TITLES, formatFileSize, type JobPriority } from "@/lib/jobsData";
 import {
-  workOrderById, woStatus, woJobs, woNextStep, customerById, CONTACTS, assetById, warrantyState, estimateForWO,
+  workOrderById, woStatus, woWorkType, woJobs, woNextStep, customerById, CONTACTS, assetById, warrantyState, estimateForWO,
   estimateTotal, setEstimateStatus, ESTIMATES, SERVICE_PRICING, logWO, billingStateForJob, fmtDate, fmtTime, money,
   datasetNow, SLA_HOURS_BY_SERVICE, type WorkOrder, type Estimate,
 } from "@/lib/serviceData";
@@ -94,7 +95,7 @@ export default function WorkOrderDetail({ woId }: { woId: number }) {
   const createEstimate = () => {
     const p = SERVICE_PRICING[wo.serviceType];
     const est: Estimate = {
-      id: `est-${wo.id}`, number: `EST-2024-${String(400 + ESTIMATES.length).padStart(4, "0")}`, woId: wo.id, customer: wo.customer,
+      id: `est-${wo.id}`, number: `EST-${DOC_YEAR}-${String(400 + ESTIMATES.length).padStart(4, "0")}`, woId: wo.id, customer: wo.customer,
       issuedOn: datasetNow(), validUntil: datasetNow() + 30 * 864e5, status: "Draft",
       lines: [...p.parts, { item: `Labour — ${p.durationHrs} hrs`, qty: 1, rate: p.labor }],
     };
@@ -302,7 +303,10 @@ export default function WorkOrderDetail({ woId }: { woId: number }) {
                     <Field label="Work order #">{wo.number}</Field>
                     <Field label="Title">{wo.title}</Field>
                     <Field label="Description"><span className="text-[var(--text-body)]">{wo.description || "—"}</span></Field>
-                    <Field label="Service type">{wo.serviceType}</Field>
+                    <Field label="Work type">{woWorkType(wo)}</Field>
+                    <Field label="Trade">{wo.serviceType}</Field>
+                    {wo.requestNumber && <Field label="Request"><Link href={`/requests/${wo.requestNumber}`} className="font-semibold text-blue-600 hover:underline">{wo.requestNumber}</Link></Field>}
+                    {detailPairs(woWorkType(wo), wo.details).map(([k, v]) => <Field key={k} label={k}>{v}</Field>)}
                     <Field label="Priority"><PriorityTag priority={wo.priority} /></Field>
                     <Field label="Requested by">{contact ? `${contact.name} · ${contact.title}` : "—"}</Field>
                   </dl>

@@ -4,9 +4,9 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import Button from "@mui/material/Button";
 import { Path, Lightning } from "@phosphor-icons/react";
-import { jobWindow, fmtTime, JOB_DURATION_HRS, type WorkOrder } from "@/lib/serviceData";
+import { jobWindow, fmtTime, JOB_DURATION_HRS, customerByName, type WorkOrder } from "@/lib/serviceData";
 import type { JobRecord } from "@/lib/jobsData";
-import { DEPOT, placeFor } from "@/lib/geoData";
+import { DEPOT, positionFor } from "@/lib/geoData";
 import { planRoute, routeKm, routeDriveMin, type Stop, type RoutePlan } from "@/lib/routing";
 
 const PALETTE = ["#2563EB", "#16A34A", "#DC2626", "#9333EA", "#EA580C", "#0891B2", "#CA8A04", "#DB2777"];
@@ -37,10 +37,10 @@ export default function DispatchMap({ jobs, queue, selId, zoneOk, isDark, onSele
     const by = new Map<string, Stop[]>();
     for (const j of jobs) {
       if (j.status === "Cancelled" || !zoneOk(j.region)) continue;
-      const p = placeFor(j.customer, j.region);
+      const p = positionFor(j.customer, j.region, customerByName(j.customer));
       const w = jobWindow(j);
       const list = by.get(j.technician) ?? [];
-      list.push({ id: j.id, label: `${j.jobId} · ${j.customer}`, lat: p.lat, lng: p.lng, start: w.start, durMs: w.end - w.start || JOB_DURATION_HRS[j.serviceType] * 3600000, status: j.status });
+      list.push({ id: j.id, label: `${j.jobId} · ${j.customer}`, lat: p.lat, lng: p.lng, geocoded: p.geocoded, start: w.start, durMs: w.end - w.start || JOB_DURATION_HRS[j.serviceType] * 3600000, status: j.status });
       by.set(j.technician, list);
     }
     return [...by].map(([tech, stops], i) => {
@@ -77,18 +77,18 @@ export default function DispatchMap({ jobs, queue, selId, zoneOk, isDark, onSele
         const active = selId?.kind === "job" && (selId as { id?: number }).id === s.id;
         const job = jobs.find(j => j.id === s.id);
         L.marker([s.lat, s.lng], { icon: L.divIcon({ className: "", iconSize: [28, 28], html: `<div style="width:${active ? 32 : 26}px;height:${active ? 32 : 26}px;border-radius:50%;background:${r.color};color:#fff;font:700 12px sans-serif;display:flex;align-items:center;justify-content:center;border:3px solid ${active ? "#F59E0B" : "#fff"};box-shadow:0 1px 4px rgba(0,0,0,.4)">${i + 1}</div>` }) })
-          .bindTooltip(`${i + 1}. ${s.label}<br>${r.tech} · ${fmtTime(s.start)}${job ? ` · ${job.status}` : ""}`)
+          .bindTooltip(`${i + 1}. ${s.label}<br>${r.tech} · ${fmtTime(s.start)}${job ? ` · ${job.status}` : ""}<br>Position: ${s.geocoded ? "geocoded" : "approximate"}`)
           .on("click", () => onSelect({ kind: "job", id: s.id })).addTo(g);
       });
     }
 
     for (const w of queue) {
       if (!zoneOk(w.zone)) continue;
-      const p = placeFor(w.customer, w.zone);
+      const p = positionFor(w.customer, w.zone, customerByName(w.customer));
       pts.push([p.lat, p.lng]);
       const active = selId?.kind === "wo" && (selId as { id?: number }).id === w.id;
       L.marker([p.lat, p.lng], { icon: L.divIcon({ className: "", iconSize: [24, 24], html: `<div style="width:${active ? 28 : 22}px;height:${active ? 28 : 22}px;border-radius:50%;background:#fff;border:3px dashed #F59E0B;box-shadow:0 1px 4px rgba(0,0,0,.3)"></div>` }) })
-        .bindTooltip(`${w.number} · ${w.title}<br>Not yet scheduled`).on("click", () => onSelect({ kind: "wo", id: w.id })).addTo(g);
+        .bindTooltip(`${w.number} · ${w.title}<br>Not yet scheduled<br>Position: ${p.geocoded ? "geocoded" : "approximate"}`).on("click", () => onSelect({ kind: "wo", id: w.id })).addTo(g);
     }
 
     if (!fitted.current && pts.length > 1) { m.fitBounds(L.latLngBounds(pts), { padding: [30, 30], maxZoom: 12 }); fitted.current = true; }
@@ -101,6 +101,10 @@ export default function DispatchMap({ jobs, queue, selId, zoneOk, isDark, onSele
   }, [isDark]);
 
   const plans = routes.filter(r => r.plan);
+  const placed = useMemo(() => {
+    const all = [...routes.flatMap(r => r.order.map(s => s.geocoded)), ...queue.filter(w => zoneOk(w.zone)).map(w => !!customerByName(w.customer)?.lat)];
+    return { geocoded: all.filter(Boolean).length, approx: all.filter(x => !x).length };
+  }, [routes, queue, zoneOk]);
 
   return (
     <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-3 p-3">
@@ -136,7 +140,7 @@ export default function DispatchMap({ jobs, queue, selId, zoneOk, isDark, onSele
             </ul>
           )}
         </div>
-        <p className="m-0 text-[12px] text-[var(--text-muted)]">Positions are sample locations inside each zone; distances are road estimates at 35 km/h. Customers are not notified automatically when you apply a new order.</p>
+        <p className="m-0 text-[12px] text-[var(--text-muted)]" data-testid="map-positions">{placed.geocoded} position{placed.geocoded === 1 ? "" : "s"} geocoded from the customer address, {placed.approx} approximate (a stable spot inside the zone). Hover a marker to see which. Add real positions in Settings, Data and booking, Geocode addresses. Distances are straight-line x 1.3 at 35 km/h.</p>
       </div>
     </div>
   );

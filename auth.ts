@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { consumeToken } from "@/lib/tokens";
 import { authConfig } from "@/auth.config";
 import { baseUrl, testIdpEnabled, TEST_CLIENTS } from "@/lib/testIdp";
+import { demoMode, validSwitchToken } from "@/lib/demo";
 
 const MAX_FAILS = 5;
 const LOCK_MINUTES = 15;
@@ -72,6 +73,20 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         return asUser(user);
       },
     }),
+    // Demo role switcher: only reachable through /api/demo/switch-role, which signs a one-off token for a signed-in user.
+    Credentials({
+      id: "demo-switch",
+      credentials: { email: {}, token: {} },
+      async authorize(raw) {
+        if (!demoMode()) return null;
+        const email = String(raw?.email ?? "").trim().toLowerCase();
+        if (!validSwitchToken(email, String(raw?.token ?? ""))) return null;
+        const user = await db.user.findUnique({ where: { email } });
+        if (!user || user.status !== "Active") return null;
+        await db.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+        return asUser(user);
+      },
+    }),
     ...(oauthProviders.google ? [Google({})] : testIdpEnabled() ? [testProvider("google", "Google (test)")] : []),
     ...(oauthProviders.microsoft ? [MicrosoftEntraID({})] : testIdpEnabled() ? [testProvider("microsoft-entra-id", "Microsoft (test)")] : []),
   ],
@@ -79,7 +94,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     ...authConfig.callbacks,
     // Social sign-in: existing people sign in; new people get a fresh organization (provider-verified email only).
     async signIn({ account, user, profile }) {
-      if (account?.provider === "credentials" || account?.provider === "otp") return true;
+      if (account?.provider === "credentials" || account?.provider === "otp" || account?.provider === "demo-switch") return true;
       const email = user.email?.toLowerCase();
       if (!email) return false;
       const existing = await db.user.findUnique({ where: { email } });
@@ -91,7 +106,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return true;
     },
     async jwt({ token, user, account, trigger, session }) {
-      if (account && account.provider !== "credentials" && account.provider !== "otp" && user?.email) {
+      if (account && account.provider !== "credentials" && account.provider !== "otp" && account.provider !== "demo-switch" && user?.email) {
         const u = await db.user.findUnique({ where: { email: user.email.toLowerCase() } });
         if (u) {
           await db.user.update({ where: { id: u.id }, data: { emailVerifiedAt: u.emailVerifiedAt ?? new Date(), lastLoginAt: new Date() } });

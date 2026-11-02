@@ -184,6 +184,8 @@ export default function DispatchConsole() {
   const [winMins, setWinMins] = useState(120);
   const [ask, setAsk] = useState<{ customer: string; email: string; phone: string; channel: "email" | "sms" | "whatsapp"; subject: string; message: string } | null>(null);
   useEffect(() => { loadCerts().then(() => setVersion(v => v + 1)); fetch("/api/org").then(r => (r.ok ? r.json() : null)).then(o => { if (o?.arrivalWindowMins) setWinMins(o.arrivalWindowMins); }).catch(() => {}); }, []);
+  type RouteNotice = { tech: string; channel: "email" | "sms" | "whatsapp"; items: { jobId: string; jobName: string; customer: string; oldStart: number; newStart: number; email: string; phone: string }[] };
+  const [routeAsk, setRouteAsk] = useState<RouteNotice | null>(null);
   const askToNotify = (customer: string, jobName: string, start: number) => {
     const cust = customerByName(customer);
     const when = `${weekday(start)}, ${fmtDate(start)} between ${fmtTime(start)} and ${fmtTime(start + winMins * 60000)}`;
@@ -402,9 +404,44 @@ Your service visit (${jobName}) is booked for ${when}. A technician will arrive 
 
   // ── Live map ──
   const applyRoute = (tech: string, times: { id: number; start: number }[]) => {
+    // Remember the old times first so the customers whose visit moved can be told.
+    const moved: RouteNotice["items"] = [];
+    for (const t of times) {
+      const job = ALL_JOBS.find(j => j.id === t.id);
+      const oldStart = job ? jobWindow(job).start : t.start;
+      if (job && oldStart !== t.start) {
+        const cust = customerByName(job.customer);
+        moved.push({ jobId: job.jobId, jobName: job.jobName, customer: job.customer, oldStart, newStart: t.start, email: cust?.email?.trim() ?? "", phone: cust?.phone && cust.phone !== "—" ? cust.phone.trim() : "" });
+      }
+    }
     times.forEach(t => rescheduleJob(t.id, tech, t.start));
     refresh();
-    notify(`${tech}'s route reordered (${times.length} visits). Customers have not been told; update them from each job.`);
+    notify(`${tech}'s route reordered (${times.length} visits).${moved.length ? ` ${moved.length} customer${moved.length === 1 ? "" : "s"} can be told about the new time${moved.length === 1 ? "" : "s"}.` : ""}`);
+    if (moved.length) setRouteAsk({ tech, channel: "email", items: moved });
+  };
+  const windowText = (start: number) => `${weekday(start)}, ${fmtDate(start)} between ${fmtTime(start)} and ${fmtTime(start + winMins * 60000)}`;
+  const routeMessage = (i: RouteNotice["items"][number]) => ({
+    subject: `Your visit time has changed: ${i.jobName}`,
+    message: `Hello,
+
+We have adjusted our technician's route, so your service visit (${i.jobName}, ${i.jobId}) has moved from ${windowText(i.oldStart)} to ${windowText(i.newStart)}. A technician will arrive within the new window. Reply or call us if the new time does not suit you.`,
+  });
+  const sendRouteAsk = async () => {
+    if (!routeAsk) return;
+    const { channel, items } = routeAsk;
+    let sent = 0, logged = 0, skipped = 0, failed = 0;
+    for (const i of items) {
+      const to = channel === "email" ? i.email : i.phone;
+      if (!to) { skipped++; continue; }
+      const m = routeMessage(i);
+      const res = await fetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel, event: "appointment.rescheduled", to, subject: m.subject, message: m.message }) }).catch(() => null);
+      if (!res?.ok) { failed++; continue; }
+      const d = await res.json().catch(() => ({}));
+      if (d.status === "sent") sent++; else logged++;
+    }
+    const parts = [sent && `${sent} sent`, logged && `${logged} recorded in the delivery log (test provider, nothing sent)`, skipped && `${skipped} skipped (no ${channel === "email" ? "email" : "phone"} on file)`, failed && `${failed} failed`].filter(Boolean);
+    notify(`Customer notices: ${parts.join(", ")}`, undefined, failed ? "info" : "success");
+    setRouteAsk(null);
   };
   const map = <DispatchMap jobs={dayJobs} queue={queue} selId={sel} zoneOk={zoneOk} isDark={isDark} onSelect={setSel} onApply={applyRoute} />;
 
@@ -716,6 +753,29 @@ Your service visit (${jobName}) is booked for ${when}. A technician will arrive 
             <div className="flex items-center gap-2"><select aria-label="Channel" className="h-9 px-3 rounded-[10px] text-[13px] border-[1.5px] border-[var(--serviceops-soft)] bg-[var(--bg-card)]" value={ask.channel} onChange={e => setAsk({ ...ask, channel: e.target.value as "email" | "sms" | "whatsapp" })}><option value="email">Email</option><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option></select><span className="text-body text-[var(--text-body)]">to {(ask.channel === "email" ? ask.email : ask.phone) || "(no contact on file)"}</span></div>
             <textarea aria-label="Message to customer" rows={5} value={ask.message} onChange={e => setAsk({ ...ask, message: e.target.value })} className="w-full rounded-[10px] border-[1.5px] border-[var(--serviceops-soft)] bg-[var(--bg-card)] p-2.5 text-[13px] text-[var(--text-primary)]" />
             <div className="flex justify-end gap-2"><Button onClick={() => setAsk(null)} sx={{ color: "var(--text-muted)" }}>Skip</Button><Button variant="contained" onClick={sendAsk}>Send</Button></div>
+          </div>
+        )}
+      </Dialog>
+
+      <Dialog open={!!routeAsk} onClose={() => setRouteAsk(null)} maxWidth="sm" fullWidth>
+        {routeAsk && (
+          <div className="p-5 flex flex-col gap-3">
+            <h2 className="m-0 text-h2 font-bold text-[var(--text-primary)]">Tell {routeAsk.items.length} customer{routeAsk.items.length === 1 ? "" : "s"} about the new time{routeAsk.items.length === 1 ? "" : "s"}?</h2>
+            <p className="m-0 text-body text-[var(--text-muted)]">{routeAsk.tech}&apos;s route changed. Each message is recorded in Settings, Delivery log.</p>
+            <div className="flex items-center gap-2"><label htmlFor="route-channel" className="text-body">Send by</label><select id="route-channel" className="h-9 px-3 rounded-[10px] text-[13px] border-[1.5px] border-[var(--serviceops-soft)] bg-[var(--bg-card)]" value={routeAsk.channel} onChange={e => setRouteAsk({ ...routeAsk, channel: e.target.value as RouteNotice["channel"] })}><option value="email">Email</option><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option></select></div>
+            <ul className="m-0 p-0 list-none flex flex-col gap-2 max-h-[280px] overflow-auto">
+              {routeAsk.items.map(i => {
+                const to = routeAsk.channel === "email" ? i.email : i.phone;
+                return (
+                  <li key={i.jobId} className="rounded-xl border border-[var(--border)] p-3 text-[13px]">
+                    <p className="m-0 font-semibold text-[var(--text-primary)]">{i.customer} <span className="font-normal text-[var(--text-muted)]">· {i.jobId}</span></p>
+                    <p className="m-0 text-[var(--text-body)]">{fmtTime(i.oldStart)} → {fmtTime(i.newStart)} <span className="text-[var(--text-muted)]">({fmtDay(i.newStart)})</span></p>
+                    <p className="m-0 text-[12px] text-[var(--text-muted)]">{to ? `To ${to}` : `No ${routeAsk.channel === "email" ? "email address" : "phone number"} on file. This one will be skipped.`}</p>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="flex justify-end gap-2"><Button onClick={() => setRouteAsk(null)} sx={{ color: "var(--text-muted)" }}>Skip</Button><Button variant="contained" onClick={sendRouteAsk} disabled={!routeAsk.items.some(i => (routeAsk.channel === "email" ? i.email : i.phone))}>Send</Button></div>
           </div>
         )}
       </Dialog>

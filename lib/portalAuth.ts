@@ -40,7 +40,21 @@ type Snap = {
   historicInvoices?: { number: string; customer: string; amount: number; paid: number; status: string; dueOn: number }[];
 };
 
+const PORTAL_KINDS = ["customers", "contacts", "workOrders", "jobs", "estimates", "historicInvoices"] as const;
+
+/** The company data the portal and public links read: the saved records, or an older single-document snapshot. */
 export async function loadSnapshot(orgId: string): Promise<Snap> {
+  const rows = await db.workspaceEntity.findMany({ where: { orgId, kind: { in: [...PORTAL_KINDS, "__order"] } }, select: { kind: true, key: true, json: true } });
+  if (rows.length) {
+    const out: Record<string, unknown[]> = {};
+    const orders = new Map(rows.filter(r => r.kind === "__order").map(r => [r.key, JSON.parse(r.json) as string[]]));
+    for (const kind of PORTAL_KINDS) {
+      const recs = new Map(rows.filter(r => r.kind === kind).map(r => [r.key, JSON.parse(r.json)]));
+      const order = orders.get(kind) ?? [...recs.keys()];
+      out[kind] = [...order.filter(k => recs.has(k)).map(k => recs.get(k)), ...[...recs.keys()].filter(k => !order.includes(k)).map(k => recs.get(k))];
+    }
+    return out as Snap;
+  }
   const row = await db.workspaceSnapshot.findUnique({ where: { orgId } });
   return row ? (JSON.parse(row.json) as Snap) : {};
 }

@@ -1,4 +1,5 @@
 "use client";
+import Logo from "@/components/ui/Logo";
 import { useState, useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import IconButton from "@mui/material/IconButton";
@@ -8,7 +9,8 @@ import Avatar from "@mui/material/Avatar";
 import Menu from "@mui/material/Menu";
 import MenuItem from "@mui/material/MenuItem";
 import Divider from "@mui/material/Divider";
-import { ListIcon, Bell, UserCircleIcon, SignOutIcon, Sun, Moon } from "@phosphor-icons/react";
+import { ListIcon, Bell, UserCircleIcon, SignOutIcon, Sun, Moon, UsersThreeIcon, CheckIcon } from "@phosphor-icons/react";
+import { ROLE_BLURB, type Role } from "@/lib/access";
 import { HeaderSearch, MobileSearch } from "./GlobalSearch";
 import { useTheme } from "@/components/ThemeContext";
 import { signOut, useSession } from "next-auth/react";
@@ -49,6 +51,14 @@ function UserMenu({
   isDark: boolean;
 }) {
   const { data: session } = useSession();
+  // Demo only: switch between one sample person per role to see what each role can do.
+  const [people, setPeople] = useState<{ name: string; email: string; role: string }[]>([]);
+  useEffect(() => {
+    if (!anchor) return;
+    fetch("/api/demo/switch-role").then(r => r.json()).then(d => setPeople(d.enabled ? d.people : [])).catch(() => setPeople([]));
+  }, [anchor]);
+  // A full-page navigation, so requests still in flight cannot write the old session back.
+  const switchTo = (email: string) => window.location.assign(`/api/demo/switch-role/go?email=${encodeURIComponent(email)}`);
   return (
     <Menu
       anchorEl={anchor}
@@ -78,6 +88,30 @@ function UserMenu({
       </div>
 
       <Divider sx={{ borderColor: isDark ? "var(--serviceops-soft)" : "var(--serviceops-soft)", mx: 0 }} />
+
+      {people.length > 1 && (
+        <>
+          <div className="px-5 pt-3 pb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--serviceops-muted)]">
+            <UsersThreeIcon size={14} weight="bold" />Switch role (demo)
+          </div>
+          <div className="px-1.5 pb-1.5">
+            {people.map(p => {
+              const current = p.email === session?.user?.email;
+              return (
+                <MenuItem key={p.email} onClick={e => { e.stopPropagation(); if (!current) switchTo(p.email); }} selected={current}
+                  sx={{ gap: 1.5, px: "14px", py: "8px", borderRadius: "10px", alignItems: "flex-start", color: "var(--serviceops-depth)" }}>
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-[13px] font-semibold leading-tight">{p.role}</span>
+                    <span className="block text-[11px] text-[var(--serviceops-muted)] leading-snug">{p.name} · {ROLE_BLURB[p.role as Role] ?? ""}</span>
+                  </span>
+                  {current && <CheckIcon size={16} weight="bold" className="mt-0.5 flex-shrink-0" />}
+                </MenuItem>
+              );
+            })}
+          </div>
+          <Divider sx={{ borderColor: "var(--serviceops-soft)", mx: 0 }} />
+        </>
+      )}
 
       <div className="py-1.5 px-1.5">
         <MenuItem
@@ -315,11 +349,7 @@ export default function AppHeader() {
         >
           <ListIcon size={18} weight="bold" />
         </button>
-        <img
-          src="/logo.png"
-          alt="ServiceOps"
-          style={{ height: "28px", width: "auto", display: "block", flexShrink: 0 }}
-        />
+        <Logo style={{ height: "28px", width: "auto", display: "block", flexShrink: 0 }} />
       </div>
 
       {/* Right: title + controls */}

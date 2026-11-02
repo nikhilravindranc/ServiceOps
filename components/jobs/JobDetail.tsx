@@ -37,10 +37,11 @@ import {
   getWorkspace, seedJobPhotos, editJob, updateJob, logActivity, createJob,
   addJobPhotos, removeJobPhoto, addJobNote, removeJobNote,
   addJobAttachments, removeJobAttachment, addJobPart, removeJobPart,
-  generateInvoice, setJobChecklist, toEditInput, formatFileSize, nowStamp,
+  generateInvoice, setJobChecklist, BILLING_PLANS, setBillingPlan, invoiceStage, toEditInput, formatFileSize, nowStamp,
   type JobRecord, type ServiceType, type JobStatus, type EditJobInput, type JobPart,
 } from "@/lib/jobsData";
-import { workOrderForJob, assetForJob, customerHref, customerByName } from "@/lib/serviceData";
+import { workOrderForJob, assetForJob, customerHref, customerByName, invoiceReadiness, invoiceDocument, stageAmount } from "@/lib/serviceData";
+import InvoiceBlockedDialog, { type InvoiceProblem } from "@/components/billing/InvoiceBlockedDialog";
 
 // ─────────────────────────────────────────────
 //  Per-service-type template data (drives the
@@ -399,13 +400,34 @@ export default function JobDetail({ jobId }: { jobId: number }) {
       tax: detail.tax, discount: detail.discount, total: detail.total,
       paymentStatus: detail.paymentStatus,
       invoiceNumber: ws.invoice?.number ?? null,
+      invoiceDoc: ws.invoice ? invoiceDocument(job) : null,
       checklist: CHECKLIST_ITEMS.map((label, i) => ({ label, done: !!checked[i] })),
       timeline: STEP_ORDER.map((label, i) => ({ label, done: !detail.cancelled && i < detail.doneCount })),
       printedAt: nowStamp(),
     };
   }, [job, detail, ws]);
 
+  // ── Progress billing ─────────────────────────
+  const [plan, setPlan] = useState(Object.keys(BILLING_PLANS)[0]);
+  const raiseStage = (i: number) => {
+    if (!job) return;
+    const r = invoiceReadiness(job, i);
+    if (!r.ok) { setBlocked(r.problems); return; }
+    const inv = invoiceStage(job.id, i);
+    refresh(); if (inv) notify(`${inv.number} generated`);
+  };
+  const printStage = (i: number) => {
+    if (!job) return;
+    const st = ws?.stages?.[i]; const base = buildPrintPayload("invoice");
+    if (!st?.invoice || !base) return;
+    const payload: PrintPayload = { ...base, invoiceNumber: st.invoice.number, invoiceDoc: invoiceDocument(job), paymentStatus: st.paidOn ? "Paid" : "Unpaid",
+      stage: { label: st.label, pct: st.pct, amount: stageAmount(job, i), index: i, count: ws!.stages!.length } };
+    setPrintPayload(payload);
+    window.setTimeout(() => { window.print(); logActivity(job.id, `Invoice ${st.invoice!.number} printed`); refresh(); }, 80);
+  };
+
   const handlePrint = (kind: PrintKind) => {
+    if (kind === "invoice" && !ws?.invoice) { setMoreAnchor(null); openDialog("invoice"); return; }
     const payload = buildPrintPayload(kind);
     if (!payload) return;
     setPrintPayload(payload);
@@ -568,7 +590,16 @@ export default function JobDetail({ jobId }: { jobId: number }) {
     refresh();
   };
 
-  const openDialog = (kind: JobDialogKind) => { setMoreAnchor(null); setDialog(kind); };
+  // An invoice is only raised when nothing on it would be blank or wrong.
+  const [blocked, setBlocked] = useState<InvoiceProblem[] | null>(null);
+  const openDialog = (kind: JobDialogKind) => {
+    setMoreAnchor(null);
+    if (kind === "invoice") {
+      const r = invoiceReadiness(job);
+      if (!r.ok) { setBlocked(r.problems); return; }
+    }
+    setDialog(kind);
+  };
   const openEdit = () => { setMoreAnchor(null); setEditOpen(true); };
 
   const ALERT_TONE = {
@@ -653,7 +684,7 @@ export default function JobDetail({ jobId }: { jobId: number }) {
   const invoiceCard = (
     <DetailCard icon={CurrencyDollar} title="Invoice"
       action={!ws.invoice && (
-        <Button size="small" variant="contained" startIcon={<FileText size={14} weight="bold" />} onClick={() => setDialog("invoice")}>
+        <Button size="small" variant="contained" startIcon={<FileText size={14} weight="bold" />} onClick={() => openDialog("invoice")}>
           Generate
         </Button>
       )}>
@@ -683,6 +714,38 @@ export default function JobDetail({ jobId }: { jobId: number }) {
             status={detail.paymentStatus === "Paid" ? "Completed" : detail.paymentStatus === "N/A" ? "Yet to Start" : "Incomplete"} />
         </div>
       </div>
+    </DetailCard>
+  );
+
+  const progressCard = ws && !ws.invoice && detail && (
+    <DetailCard icon={CurrencyDollar} title="Progress billing">
+      {!ws.stages?.length ? (
+        <div className="flex flex-col gap-3">
+          <p className="m-0 text-body text-[var(--text-muted)]">Bill this job in stages instead of one invoice{detail.total >= 2000 ? ". It is a larger job, so a deposit may suit it." : "."}</p>
+          <select aria-label="Billing plan" value={plan} onChange={e => setPlan(e.target.value)}
+            className="h-9 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-2 text-body text-[var(--text-primary)]">
+            {Object.keys(BILLING_PLANS).map(k => <option key={k} value={k}>{k}</option>)}
+          </select>
+          <Button size="small" variant="outlined" onClick={() => { setBillingPlan(job.id, plan); refresh(); notify("Progress billing set up"); }}>Set up progress billing</Button>
+        </div>
+      ) : (
+        <div className="flex flex-col">
+          {ws.stages.map((st, i) => {
+            const nextOpen = i === ws.stages!.findIndex(s => !s.invoice);
+            return (
+              <div key={st.label + i} className="flex items-center gap-3 py-2.5 border-b border-[var(--border-soft)] last:border-b-0">
+                <div className="flex-1 min-w-0">
+                  <p className="m-0 text-label font-semibold text-[var(--text-primary)]">{st.label} · {st.pct}%</p>
+                  <p className="m-0 text-caption text-[var(--text-muted)]">{money(stageAmount(job, i))} · {st.invoice ? `${st.invoice.number}${st.paidOn ? ", paid" : ", unpaid"}` : "Not invoiced"}</p>
+                </div>
+                {st.invoice
+                  ? <Button size="small" startIcon={<Printer size={14} weight="duotone" />} onClick={() => printStage(i)}>Print</Button>
+                  : <Button size="small" variant={nextOpen ? "contained" : "outlined"} disabled={!nextOpen} onClick={() => raiseStage(i)}>Invoice</Button>}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </DetailCard>
   );
 
@@ -890,6 +953,7 @@ export default function JobDetail({ jobId }: { jobId: number }) {
           <div className="grid grid-cols-1 md:grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,400px)] gap-4 items-start">
             {partsCard}
             {invoiceCard}
+            {progressCard}
           </div>
         )}
 
@@ -1193,6 +1257,8 @@ export default function JobDetail({ jobId }: { jobId: number }) {
       {/* ══ Edit drawer ══ */}
       <EditJobDrawer open={editOpen} job={job} initial={toEditInput(job)}
         onClose={() => setEditOpen(false)} onSave={handleEditSave} />
+
+      <InvoiceBlockedDialog open={!!blocked} title="This invoice is not ready" problems={blocked ?? []} onClose={() => setBlocked(null)} />
 
       {/* ══ Action dialogs ══ */}
       <JobActionDialogs

@@ -11,7 +11,7 @@ import { MENU_ITEM_SX, MENU_PAPER_SX } from "@/components/ui/ServiceOpsUI";
 
 const ITEMS = [
   { label: "Customer", icon: Buildings, href: "/customers?new=1" },
-  { label: "Request", icon: Tray, href: "/requests?new=1" },
+  { label: "Request", icon: Tray, href: "/requests/new" },
   { label: "Work order", icon: ClipboardText, href: "/work-orders?new=1" },
   { label: "Job", icon: Wrench, href: "/jobs?new=1" },
   { label: "Catalog item", icon: Books, href: "/catalog?new=1" },

@@ -23,6 +23,12 @@ export function placeFor(name: string, zone: string): { lat: number; lng: number
   return { lat: c.lat + (unit(name, 1) - 0.5) * 0.1, lng: c.lng + (unit(name, 2) - 0.5) * 0.12 };
 }
 
+/** Position of a customer: real geocoded coordinates when known, otherwise the stable approximate spot inside its zone. */
+export function positionFor(name: string, zone: string, cust?: { lat?: number; lng?: number }): { lat: number; lng: number; geocoded: boolean } {
+  if (cust?.lat != null && cust?.lng != null) return { lat: cust.lat, lng: cust.lng, geocoded: true };
+  return { ...placeFor(name, zone), geocoded: false };
+}
+
 export function distanceKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
   const R = 6371, rad = (d: number) => (d * Math.PI) / 180;
   const dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng);

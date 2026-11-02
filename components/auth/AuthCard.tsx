@@ -1,3 +1,4 @@
+import Logo from "@/components/ui/Logo";
 import type { ReactNode } from "react";
 
 /** Shared frame for the small account pages (verify, reset, invite). Matches the login card. */
@@ -10,7 +11,7 @@ export default function AuthCard({ title, subtitle, children, wide = false }: { 
         <div className="h-1 w-full" style={{ background: "linear-gradient(90deg, #D97706 0%, #F59E0B 50%, #FBBF24 100%)" }} />
         <div className="px-10 py-8">
           <div className="flex justify-center mb-5">
-            <img src="/logo.png" alt="ServiceOps" style={{ height: 28, width: "auto" }} />
+            <Logo style={{ height: 28, width: "auto" }} />
           </div>
           <h1 className="m-0 text-[22px] font-extrabold text-[#111111] tracking-tight">{title}</h1>
           {subtitle && <p className="text-[#8A8A8A] text-[13px] mt-1 mb-5 font-medium">{subtitle}</p>}

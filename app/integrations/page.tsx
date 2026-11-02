@@ -10,6 +10,10 @@ import {
 import { PageShell, PageHeader, Pill, SideDrawer, DrawerSection, KV, useToast, Segmented, type PillTone } from "@/components/ui/ServiceOpsUI";
 import { CARD_SHADOW, IconTile, type Tone } from "@/components/dashboard/DashboardSection";
 import { useJobFieldSx } from "@/components/jobs/jobFormStyles";
+import { fmtDate, JOBS_TODAY_TS, DAY_MS } from "@/lib/serviceData";
+
+/** Date label a number of days before today (the sample clock follows the real date). */
+const when = (daysAgo: number) => fmtDate(JOBS_TODAY_TS - daysAgo * DAY_MS);
 
 type State = "Connected" | "Not connected" | "Configuration required" | "Error";
 const STATE_TONE: Record<State, PillTone> = { Connected: "green", "Not connected": "gray", "Configuration required": "amber", Error: "red" };
@@ -22,10 +26,10 @@ interface Integration {
 
 const SEED: Integration[] = [
   { key: "crm", name: "EVOQ CRM", provider: "EVOQ", group: "EVOQ suite", icon: AddressBook, tone: "amber", logo: "/integrations/evoq-crm.png", state: "Connected",
-    summary: "Customers, contacts and sites stay in step with sales.", syncs: ["Customers ⇄", "Contacts ⇄", "Sites →"], lastSync: "Sep 24, 2024 10:05 AM",
+    summary: "Customers, contacts and sites stay in step with sales.", syncs: ["Customers ⇄", "Contacts ⇄", "Sites →"], lastSync: `${when(0)} 10:05 AM`,
     fields: [{ label: "Workspace", value: "northeastfs.evoq.app" }, { label: "Sync direction", value: "Two-way" }] },
   { key: "inventory", name: "EVOQ Inventory", provider: "EVOQ", group: "EVOQ suite", icon: Package, tone: "amber", logo: "/integrations/evoq-inventory.png", state: "Connected",
-    summary: "Parts catalogue, warehouse stock and purchasing. ServiceOps shows the field view.", syncs: ["Parts →", "Stock levels → every 15 min", "Part requests ⇄", "Returns →"], lastSync: "Sep 24, 2024 10:15 AM",
+    summary: "Parts catalogue, warehouse stock and purchasing. ServiceOps shows the field view.", syncs: ["Parts →", "Stock levels → every 15 min", "Part requests ⇄", "Returns →"], lastSync: `${when(0)} 10:15 AM`,
     fields: [{ label: "Warehouse", value: "Newark Main (WH-01)" }, { label: "Van locations", value: "8 mapped" }] },
   { key: "billing", name: "EVOQ Billing", provider: "EVOQ", group: "EVOQ suite", icon: Receipt, tone: "amber", logo: "/integrations/evoq-billing.png", state: "Configuration required",
     summary: "Invoices, payments and credit notes for completed jobs.", syncs: ["Invoices →", "Payment status ←"], issue: "Map ServiceOps tax rate (18%) to a Billing tax code before invoices can sync.",
@@ -33,13 +37,13 @@ const SEED: Integration[] = [
   { key: "erp", name: "ERP", provider: "SAP Business One", group: "Business systems", icon: Factory, tone: "blue", state: "Not connected",
     summary: "Cost centres, purchase orders and fixed-asset records.", syncs: ["Cost centres ←", "Purchase orders ←", "Asset register ⇄"], fields: [{ label: "Service layer URL", value: "" }, { label: "Company DB", value: "" }] },
   { key: "accounting", name: "Accounting", provider: "QuickBooks Online", group: "Business systems", icon: Calculator, tone: "blue", state: "Error",
-    summary: "General ledger postings for service revenue and parts cost.", syncs: ["Journal entries →"], lastSync: "Sep 21, 2024 06:00 PM", issue: "Authorisation expired on Sep 22. Reconnect to resume postings — 7 entries are queued.",
+    summary: "General ledger postings for service revenue and parts cost.", syncs: ["Journal entries →"], lastSync: `${when(3)} 06:00 PM`, issue: "Authorisation expired on Sep 22. Reconnect to resume postings — 7 entries are queued.",
     fields: [{ label: "Company", value: "Northeast Facility Services LLC" }] },
   { key: "maps", name: "Maps & location", provider: "Google Maps Platform", group: "Location", icon: MapTrifold, tone: "green", state: "Not connected",
     summary: "Live technician locations, travel times and routing in Dispatch. Until connected, Dispatch uses an OpenStreetMap view with sample locations.", syncs: ["Geocoding", "Drive times", "Live locations"],
     fields: [{ label: "API key", value: "", secret: true }] },
   { key: "email", name: "Email", provider: "Microsoft 365", group: "Communication", icon: EnvelopeSimple, tone: "purple", state: "Connected",
-    summary: "Service reports, estimates and reminders sent from service@northeastfs.com.", syncs: ["Outbound email"], lastSync: "Sep 24, 2024 09:58 AM",
+    summary: "Service reports, estimates and reminders sent from service@northeastfs.com.", syncs: ["Outbound email"], lastSync: `${when(0)} 09:58 AM`,
     fields: [{ label: "Sender", value: "service@northeastfs.com" }, { label: "Reply-to", value: "dispatch@northeastfs.com" }] },
   { key: "sms", name: "SMS", provider: "Twilio", group: "Communication", icon: ChatText, tone: "purple", state: "Configuration required",
     summary: "“Technician on the way” and appointment texts to customers.", syncs: ["Outbound SMS", "Delivery receipts"], issue: "Sender number +1 646 555 0190 is awaiting carrier registration (A2P 10DLC).",
@@ -47,7 +51,7 @@ const SEED: Integration[] = [
   { key: "payments", name: "Payments", provider: "Stripe", group: "Payments", icon: CreditCard, tone: "green", state: "Not connected",
     summary: "Card and ACH payment links on invoices and on-site collection by technicians.", syncs: ["Payment links", "Payouts ←"], fields: [{ label: "Account", value: "" }] },
   { key: "api", name: "REST API", provider: "ServiceOps", group: "Developer", icon: Code, tone: "gray", state: "Connected",
-    summary: "Programmatic access for your own tools. 2 active keys.", syncs: ["Read & write — scoped keys"], lastSync: "Key last used Sep 24, 2024 08:41 AM",
+    summary: "Programmatic access for your own tools. 2 active keys.", syncs: ["Read & write — scoped keys"], lastSync: `Key last used ${when(0)} 08:41 AM`,
     fields: [{ label: "Key · Reporting warehouse", value: "so_live_••••••••a91c", secret: true }, { label: "Key · Facilities portal", value: "so_live_••••••••77de", secret: true }] },
   { key: "webhooks", name: "Webhooks", provider: "ServiceOps", group: "Developer", icon: WebhooksLogo, tone: "gray", state: "Connected",
     summary: "Push job, work order and invoice events to other systems. 3 endpoints.", syncs: ["job.completed", "workorder.created", "invoice.paid"], lastSync: "Delivered Sep 24, 2024 10:12 AM · 99.6% success",

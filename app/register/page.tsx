@@ -1,4 +1,5 @@
 "use client";
+import Logo from "@/components/ui/Logo";
 import { useState } from "react";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -99,7 +100,7 @@ export default function RegisterPage() {
         <div className="px-10 pt-7 pb-6">
           {/* Logo */}
           <div className="flex justify-center mb-5">
-            <img src="/logo.png" alt="ServiceOps" style={{ height: "28px", width: "auto" }} />
+            <Logo style={{ height: "28px", width: "auto" }} />
           </div>
 
           {/* Heading */}

@@ -13,12 +13,13 @@ import {
 } from "@/components/ui/ServiceOpsUI";
 import { INVOICE_TONE, ESTIMATE_TONE } from "@/components/workorders/woShared";
 import { matchesQuery } from "@/lib/filtering";
-import { ALL_JOBS, generateInvoice, getWorkspace, type JobRecord } from "@/lib/jobsData";
+import { ALL_JOBS, generateInvoice, invoiceStage, getWorkspace, type JobRecord } from "@/lib/jobsData";
 import {
   allInvoices, outstanding, recordPayment, billingStateForJob, jobCharges, workOrderForJob, ESTIMATES, estimateTotal,
   workOrderById, setEstimateStatus, customerHref, customerByName, fmtDate, fmtDay, money, JOBS_TODAY_TS, DAY_MS,
-  type Invoice, type BillingState, type InvoiceStatus,
+  invoiceReadiness, type Invoice, type BillingState, type InvoiceStatus,
 } from "@/lib/serviceData";
+import InvoiceBlockedDialog, { type InvoiceProblem } from "@/components/billing/InvoiceBlockedDialog";
 
 type Tab = "jobs" | "invoices" | "estimates";
 type JobScope = "ready" | "accruing" | "billed";
@@ -47,8 +48,15 @@ export default function BillingPage() {
   const overdue = invoices.filter(i => i.status === "Overdue");
   const pendingEst = ESTIMATES.filter(e => e.status === "Sent");
 
+  const [blocked, setBlocked] = useState<{ title: string; problems: InvoiceProblem[] } | null>(null);
   const sendPayLink = async (i: Invoice) => {
     const email = customerByName(i.customer)?.email ?? "";
+    // Nothing goes to a customer without a valid address and a real amount.
+    const problems: InvoiceProblem[] = [];
+    if (!/^\S+@\S+\.\S+$/.test(email.trim())) problems.push({ text: `${i.customer} has no valid billing email address.`, fixHref: customerHref(i.customer) });
+    if (!(i.amount > 0)) problems.push({ text: "The invoice amount is zero." });
+    if (i.status === "Paid") problems.push({ text: "This invoice is already paid." });
+    if (problems.length) { setBlocked({ title: `${i.number} cannot be sent`, problems }); return; }
     const res = await fetch("/api/public-links", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "invoice", ref: i.number, customer: i.customer, title: `Invoice ${i.number}`, email, taxPct: 0, lines: [], amount: outstanding(i) }) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { notify("Could not create the payment link", undefined, "info"); return; }
@@ -56,14 +64,30 @@ export default function BillingPage() {
     navigator.clipboard?.writeText(data.url).catch(() => {});
     notify("Link created and copied. Email is not configured here, so share it by hand.", undefined, "info");
   };
+  /** Raises the single invoice, or the next stage when the job is progress-billed. */
+  const raise = (j: JobRecord) => {
+    const stages = getWorkspace(j.id).stages;
+    if (!stages?.length) return generateInvoice(j.id);
+    return invoiceStage(j.id, stages.findIndex(s => !s.invoice))!;
+  };
+  const readiness = (j: JobRecord) => {
+    const stages = getWorkspace(j.id).stages;
+    return invoiceReadiness(j, stages?.length ? stages.findIndex(s => !s.invoice) : undefined);
+  };
   const invoiceJob = (j: JobRecord) => {
-    const inv = generateInvoice(j.id);
+    const r = readiness(j);
+    if (!r.ok) { setBlocked({ title: `${j.jobId} is not ready to invoice`, problems: r.problems }); return; }
+    const inv = raise(j);
     refresh(); notify(`${inv.number} raised for ${j.customer}`, `/jobs/${j.id}`);
   };
   const invoiceAllReady = () => {
     if (!ready.length) return;
-    ready.forEach(r => generateInvoice(r.j.id));
-    refresh(); setTab("invoices"); notify(`${ready.length} invoice${ready.length === 1 ? "" : "s"} raised`);
+    const ok = ready.filter(r => readiness(r.j).ok);
+    const skipped = ready.filter(r => !readiness(r.j).ok);
+    ok.forEach(r => raise(r.j));
+    refresh();
+    if (ok.length) { setTab("invoices"); notify(`${ok.length} invoice${ok.length === 1 ? "" : "s"} raised${skipped.length ? `, ${skipped.length} held back` : ""}`); }
+    if (skipped.length) setBlocked({ title: `${skipped.length} job${skipped.length === 1 ? "" : "s"} held back`, problems: skipped.flatMap(r => readiness(r.j).problems.map(p => ({ ...p, text: `${r.j.jobId}: ${p.text}` }))) });
   };
 
   type JRow = typeof jobs[number];
@@ -226,6 +250,7 @@ export default function BillingPage() {
       <p className="m-0 flex items-center gap-2 text-caption text-[var(--text-muted)]">
         <Info size={14} /> Payments, credit notes and accounting exports are handled in <Link href="/integrations" className="text-blue-600 hover:underline">EVOQ Billing</Link>.
       </p>
+      <InvoiceBlockedDialog open={!!blocked} title={blocked?.title ?? ""} problems={blocked?.problems ?? []} onClose={() => setBlocked(null)} />
       {toastNode}
     </PageShell>
   );

@@ -9,6 +9,7 @@ export async function POST(req: Request) {
   const { mode } = await req.json().catch(() => ({}));
   if (mode !== "sample" && mode !== "empty") return NextResponse.json({ error: "Choose sample or empty." }, { status: 400 });
   await db.workspaceSnapshot.deleteMany({ where: { orgId: r.user.orgId } });
+  await db.workspaceEntity.deleteMany({ where: { orgId: r.user.orgId } });
   await db.organization.update({ where: { id: r.user.orgId }, data: { sampleData: mode === "sample" } });
   await audit(r.user, "workspace.reset", "organization", r.user.orgId, { mode });
   return NextResponse.json({ ok: true });

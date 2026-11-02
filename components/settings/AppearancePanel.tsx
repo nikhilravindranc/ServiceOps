@@ -125,7 +125,7 @@ export default function AppearancePanel({ notify }: { notify: Notify }) {
       <p className="m-0 mb-2 text-caption font-semibold uppercase tracking-wide text-[var(--text-muted)]">Preview</p>
       {banner ? (
         <HomeBanner banner={banner} image={image} canEdit={false}>
-          <p className="m-0 text-caption opacity-80">Tuesday, September 24, 2024</p>
+          <p className="m-0 text-caption opacity-80">{new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</p>
           <p className="m-0 text-[26px] leading-[32px] font-bold tracking-tight">Good morning, Alex</p>
           <p className="m-0 mt-1 text-body opacity-90">5 visits today · 3 need attention</p>
         </HomeBanner>

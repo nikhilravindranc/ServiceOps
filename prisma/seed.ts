@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { SERVICE_PRICING, SERVICE_ZONES } from "../lib/serviceData";
+import { DEMO_TEAM } from "../lib/demo";
 
 const db = new PrismaClient();
 
@@ -25,6 +26,17 @@ async function main() {
     update: { passwordHash: await bcrypt.hash(password, 12), status: "Active", emailVerifiedAt: new Date() },
     create: { orgId: org.id, name: "Demo Administrator", email, passwordHash: await bcrypt.hash(password, 12), role: "Administrator", emailVerifiedAt: new Date() },
   });
+
+  // One sample person per role so every role can be tried from the profile menu (demo role switcher).
+  const teamPassword = process.env.SEED_TEAM_PASSWORD || password;
+  const teamHash = await bcrypt.hash(teamPassword, 12);
+  for (const p of DEMO_TEAM) {
+    await db.user.upsert({
+      where: { email: p.email },
+      update: { passwordHash: teamHash, status: "Active", emailVerifiedAt: new Date(), role: p.role, orgId: org.id },
+      create: { orgId: org.id, name: p.name, email: p.email, passwordHash: teamHash, role: p.role, emailVerifiedAt: new Date() },
+    });
+  }
 
   if ((await db.catalogItem.count({ where: { orgId: org.id } })) === 0) {
     const rows = Object.entries(SERVICE_PRICING).flatMap(([type, p]) => [

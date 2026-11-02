@@ -1,4 +1,5 @@
 "use client";
+import Logo from "@/components/ui/Logo";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { EnvelopeSimple, ArrowLeft, CheckCircle, ArrowRight } from "@phosphor-icons/react";
@@ -49,7 +50,7 @@ export default function ForgotPasswordPage() {
         <div className="px-8 py-8">
           {/* Logo */}
           <div className="flex justify-center mb-6">
-            <img src="/logo.png" alt="ServiceOps" style={{ height: "26px", width: "auto" }} />
+            <Logo style={{ height: "26px", width: "auto" }} />
           </div>
 
           {!sent ? (

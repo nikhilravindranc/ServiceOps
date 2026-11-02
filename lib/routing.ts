@@ -1,6 +1,6 @@
 import { DEPOT, distanceKm, driveMinutes } from "@/lib/geoData";
 
-export type Stop = { id: number; label: string; lat: number; lng: number; start: number; durMs: number; status: string };
+export type Stop = { id: number; label: string; lat: number; lng: number; start: number; durMs: number; status: string; /** true when lat/lng come from geocoding, false for an approximate zone position */ geocoded?: boolean };
 
 const MOVABLE = ["Yet to Start", "Scheduled"];
 const MIN15 = 15 * 60_000;

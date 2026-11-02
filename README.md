@@ -19,6 +19,12 @@ Sign in with `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` from `.env`.
 ## Deploying to Vercel (demo)
 Push to git; no dashboard settings are needed. `npm run vercel-build` (`scripts/prepare-demo.mjs`) builds a seeded SQLite database and a per-deployment auth secret. At runtime the database is copied to `/tmp`, so data resets when the server restarts. Default demo login: `demo@serviceops.dev` / `ServiceOps-Demo-2026`. Set `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` or `AUTH_SECRET` in Vercel to override. Replace SQLite with Postgres before real use.
 
+## Roles
+Five roles: Administrator, Service manager, Dispatcher, Service coordinator, Technician. Each sees only the screens it may open (`lib/access.ts`, enforced in the sidebar and in `middleware.ts`). The seed script adds one sample person per role (`lib/demo.ts`); on demo and local runs the profile menu has "Switch role (demo)" to try each one. The switcher is off in a normal production deploy unless `DEMO_MODE=1`.
+
+## Requests, work orders and invoices
+A request carries a work type (Installation, Service, Maintenance, Repair, Inspection) with its own questions, plus the trade (HVAC, Electrical, ...). Converting it creates a work order that keeps the request number; the request page shows the chain request, estimate, work order, job, invoice. An invoice is only raised or sent when nothing on it would be blank or wrong (`invoiceReadiness` in `lib/serviceData.ts`). Large jobs can be billed in stages (progress billing).
+
 ## Email and social sign-in
 Without `RESEND_API_KEY`, verification links, reset links and sign-in codes are printed in the server console and shown on screen in development. Google and Microsoft sign-in need the client IDs in `.env.example`.
 

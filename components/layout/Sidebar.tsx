@@ -1,4 +1,5 @@
 "use client";
+import Logo from "@/components/ui/Logo";
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -12,6 +13,7 @@ import { useSession } from "next-auth/react";
 import { useLayout } from "@/components/LayoutContext";
 import { useTheme } from "@/components/ThemeContext";
 import { WORK_ORDERS, woStatus } from "@/lib/serviceData";
+import { canOpen } from "@/lib/access";
 
 const MOBILE_BP = 1024;
 
@@ -91,8 +93,14 @@ export default function Sidebar() {
   const [drawerOpen,  setDrawerOpen]  = useState(false); // mobile
   const drawerRef = useRef(false);
   // Badge counts read the in-memory dataset — rebuild on navigation so they follow changes.
-  const [nav, setNav] = useState(buildNav);
+  const [navAll, setNav] = useState(buildNav);
   useEffect(() => { setNav(buildNav()); }, [pathname]);
+  // Each role only sees the screens it may open.
+  const role = session?.user?.role;
+  const nav = (() => {
+    const keep = (g: NavGroup): NavGroup => ({ ...g, items: g.items.filter(i => canOpen(role, i.href)) });
+    return { main: navAll.main.map(keep).filter(g => g.items.length), admin: keep(navAll.admin) };
+  })();
 
   useEffect(() => {
     const stored = localStorage.getItem("sidebar-collapsed");
@@ -210,17 +218,12 @@ export default function Sidebar() {
             >
               <XIcon size={18} weight="bold" />
             </button>
-            <img
-              src="/logo.png"
-              alt="ServiceOps"
-              style={{ height: "28px", width: "auto" }}
-              onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-            />
+            <Logo style={{ height: "28px", width: "auto" }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
           </div>
 
           {/* Nav */}
           <nav className="flex-1 px-3 py-2 overflow-y-auto">
-            {[...nav.main, nav.admin].map((g, gi) => (
+            {[...nav.main, nav.admin].filter(g => g.items.length).map((g, gi) => (
               <div key={gi} className="space-y-0.5">
                 {g.label && groupLabel(g.label, true)}
                 {g.items.map(renderMobileItem)}
@@ -328,11 +331,11 @@ export default function Sidebar() {
       {/* Navigation (Admin is the last group, so nothing is hidden behind a pinned block on short windows) */}
       {compact && (
         <div className="flex items-center h-[56px] flex-shrink-0 px-4 border-b border-[var(--serviceops-soft)]">
-          <img src="/logo.png" alt="ServiceOps" style={collapsed ? { height: 28, width: 32, objectFit: "cover", objectPosition: "left" } : { height: 28, width: "auto" }} />
+          <Logo style={collapsed ? { height: 28, width: 32, objectFit: "cover", objectPosition: "left" } : { height: 28, width: "auto" }} />
         </div>
       )}
       <nav className="flex-1 min-h-0 px-2 py-3 overflow-y-auto overflow-x-hidden">
-        {[...nav.main, nav.admin].map(renderGroup)}
+        {[...nav.main, nav.admin].filter(g => g.items.length).map(renderGroup)}
       </nav>
 
       {/* Bottom: profile */}

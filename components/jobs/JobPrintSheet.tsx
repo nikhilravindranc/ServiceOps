@@ -1,5 +1,6 @@
 "use client";
 import { type JobRecord } from "@/lib/jobsData";
+import { fmtDate } from "@/lib/serviceData";
 
 export type PrintKind = "card" | "invoice";
 
@@ -23,6 +24,10 @@ export interface PrintPayload {
   total: number;
   paymentStatus: string;
   invoiceNumber: string | null;
+  /** Set when this invoice is one instalment of a progress-billed job. */
+  stage?: { label: string; pct: number; amount: number; index: number; count: number } | null;
+  /** Dates, terms, references and bill-to for an invoice. Null on a job card. */
+  invoiceDoc: { issuedOn: number; dueOn: number; terms: string; woNumber: string; requestNumber: string; billTo: { name: string; address: string; email: string; phone: string } } | null;
   checklist: { label: string; done: boolean }[];
   timeline: { label: string; done: boolean }[];
   printedAt: string;
@@ -70,7 +75,7 @@ export default function JobPrintSheet({ payload }: { payload: PrintPayload | nul
       {/* Customer + job meta */}
       <div style={{ display: "flex", gap: 28, marginBottom: 14 }}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "#777", marginBottom: 4 }}>Customer</div>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "#777", marginBottom: 4 }}>{isInvoice ? "Bill to" : "Customer"}</div>
           <div style={{ fontWeight: 700, fontSize: 13 }}>{p.job.customer}</div>
           <div style={{ color: "#444" }}>{p.customer.address}</div>
           <div style={{ color: "#444" }}>{p.customer.phone} · {p.customer.email}</div>
@@ -79,10 +84,19 @@ export default function JobPrintSheet({ payload }: { payload: PrintPayload | nul
           <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "#777", marginBottom: 4 }}>Job</div>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <tbody>
-              <Row label="Work Order" value={p.job.jobId} />
-              <Row label="Status" value={p.job.status} />
-              <Row label="Priority" value={p.job.priority} />
-              <Row label="Created" value={p.job.createdAt} />
+              {isInvoice && p.invoiceDoc ? (
+                <>
+                  <Row label="Invoice #" value={p.invoiceNumber ?? ""} />
+                  <Row label="Issued" value={fmtDate(p.invoiceDoc.issuedOn)} />
+                  <Row label="Due" value={`${fmtDate(p.invoiceDoc.dueOn)} (${p.invoiceDoc.terms})`} />
+                  {p.invoiceDoc.requestNumber && <Row label="Request" value={p.invoiceDoc.requestNumber} />}
+                  <Row label="Work order" value={p.invoiceDoc.woNumber} />
+                  <Row label="Job" value={p.job.jobId} />
+                </>
+              ) : <Row label="Job" value={p.job.jobId} />}
+              {!isInvoice && <Row label="Status" value={p.job.status} />}
+              {!isInvoice && <Row label="Priority" value={p.job.priority} />}
+              {!isInvoice && <Row label="Created" value={p.job.createdAt} />}
               <Row label="Technician" value={p.job.technician} />
               <Row label="Region" value={p.job.region} />
             </tbody>
@@ -133,6 +147,31 @@ export default function JobPrintSheet({ payload }: { payload: PrintPayload | nul
       <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "#777", marginBottom: 4 }}>
         {isInvoice ? "Billed Items" : "Parts & Materials"}
       </div>
+      {isInvoice && p.stage ? (
+        <>
+          <table style={{ borderCollapse: "collapse", width: "100%", marginBottom: 10 }}>
+            <thead><tr style={{ borderBottom: "1px solid #111" }}>
+              <th style={{ textAlign: "left", padding: "4px 0" }}>Description</th>
+              <th style={{ textAlign: "right", padding: "4px 0", width: 70 }}>Share</th>
+              <th style={{ textAlign: "right", padding: "4px 0", width: 100 }}>Amount</th>
+            </tr></thead>
+            <tbody><tr style={{ borderBottom: "1px solid #E5E5E5" }}>
+              <td style={{ padding: "4px 0" }}>{p.job.jobName}: {p.stage.label} (stage {p.stage.index + 1} of {p.stage.count})</td>
+              <td style={{ padding: "4px 0", textAlign: "right" }}>{p.stage.pct}%</td>
+              <td style={{ padding: "4px 0", textAlign: "right", fontWeight: 600 }}>{money(p.stage.amount)}</td>
+            </tr></tbody>
+          </table>
+          <table style={{ borderCollapse: "collapse", marginLeft: "auto", minWidth: 240 }}><tbody>
+            <Row label="Job total (incl. tax)" value={money(p.total)} />
+            <tr style={{ borderTop: "1.5px solid #111" }}>
+              <td style={{ padding: "6px 12px 0 0", fontWeight: 800 }}>Amount due</td>
+              <td style={{ padding: "6px 0 0", fontWeight: 800, fontSize: 14 }}>{money(p.stage.amount)}</td>
+            </tr>
+            <Row label="Payment Status" value={p.paymentStatus} />
+          </tbody></table>
+        </>
+      ) : (
+        <>
       <table style={{ borderCollapse: "collapse", width: "100%", marginBottom: 10 }}>
         <thead>
           <tr style={{ borderBottom: "1px solid #111" }}>
@@ -173,6 +212,9 @@ export default function JobPrintSheet({ payload }: { payload: PrintPayload | nul
           <Row label="Payment Status" value={p.paymentStatus} />
         </tbody>
       </table>
+
+        </>
+      )}
 
       {/* Sign-off */}
       <div style={{ display: "flex", justifyContent: "space-between", marginTop: 42, paddingTop: 8 }}>

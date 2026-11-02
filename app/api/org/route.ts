@@ -24,6 +24,7 @@ const patch = z.object({
   geoLat: z.number().min(-90).max(90).nullable().optional(),
   geoLng: z.number().min(-180).max(180).nullable().optional(),
   geoRadiusM: z.number().int().min(50).max(50000).nullable().optional(),
+  geofenceMode: z.enum(["flag", "block"]).optional(),
   slug: z.string().trim().regex(/^[a-z0-9-]{3,40}$/).optional(),
   bookingEnabled: z.boolean().optional(),
   arrivalWindowMins: z.number().int().min(30).max(480).optional(),

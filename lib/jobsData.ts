@@ -238,8 +238,14 @@ function scheduleFields(d: Date) {
   };
 }
 
-/** "Today" for the demo dataset — the date-range presets are relative to it. */
-export const JOBS_TODAY = new Date(2024, 8, 24);
+/** "Today" for the demo dataset: the real current date (midnight), so sample jobs always sit around the real calendar day. */
+export const JOBS_TODAY = (() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), d.getDate()); })();
+const isoDay = (offset: number, hhmm: string) => {
+  const d = new Date(JOBS_TODAY.getFullYear(), JOBS_TODAY.getMonth(), JOBS_TODAY.getDate() + offset);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T${hhmm}`;
+};
+/** Year used in document numbers (WO-2026-…, EST-2026-…). */
+export const DOC_YEAR = JOBS_TODAY.getFullYear();
 
 const at = (dayOffset: number, hour: number, minute = 0) =>
   new Date(JOBS_TODAY.getFullYear(), JOBS_TODAY.getMonth(), JOBS_TODAY.getDate() + dayOffset, hour, minute);
@@ -352,8 +358,8 @@ export const JOB_EXTRAS: Record<number, JobExtras> = {
   1: {
     jobTitle: "HVAC maintenance",
     description: "Scheduled maintenance for rooftop HVAC unit including inspection, cleaning, filter replacement and performance check. Ensure system is operating within recommended parameters.",
-    scheduleStart: "2024-09-24T09:00",
-    scheduleEnd: "2024-09-24T12:00",
+    scheduleStart: isoDay(0, "09:00"),
+    scheduleEnd: isoDay(0, "12:00"),
     productModel: "Rooftop HVAC Unit - RTU-01",
     serialNumber: "A-1001",
     notes: "Customer requested to check the noise levels and update filter condition.\nPrevious maintenance completed on Jun 18, 2024.",
@@ -467,6 +473,13 @@ export interface JobAttachment { id: string; name: string; size: string }
 export interface JobPart       { item: string; qty: number; rate: number }
 export interface JobActivity   { label: string; at: string }
 export interface JobInvoice    { number: string; generatedAt: string }
+/** One instalment of a progress-billed job: a share of the job total, invoiced on its own. */
+export interface BillingStage { label: string; pct: number; invoice: JobInvoice | null; paidOn?: number }
+export const BILLING_PLANS: Record<string, { label: string; pct: number }[]> = {
+  "Deposit and final (30 / 70)": [{ label: "Deposit", pct: 30 }, { label: "Final", pct: 70 }],
+  "Three stages (30 / 40 / 30)": [{ label: "Deposit", pct: 30 }, { label: "Progress", pct: 40 }, { label: "Final", pct: 30 }],
+  "Four equal payments": [{ label: "Payment 1", pct: 25 }, { label: "Payment 2", pct: 25 }, { label: "Payment 3", pct: 25 }, { label: "Final", pct: 25 }],
+};
 
 export interface JobWorkspace {
   photos: JobPhoto[];
@@ -479,6 +492,8 @@ export interface JobWorkspace {
   /** Entries logged by user actions, appended after the derived history. */
   activity: JobActivity[];
   invoice: JobInvoice | null;
+  /** Progress billing: when set, the job is invoiced in these stages instead of one invoice. */
+  stages?: BillingStage[];
   /** Set once the invoice has been paid (recorded in the office or through a payment link). */
   paidOn?: number;
   /** null until the user ticks something — then it owns the checklist. */
@@ -663,6 +678,26 @@ export function generateInvoice(id: number): JobInvoice {
   ws.invoice = { number: `INV-${job?.jobId.replace(/^\D+-/, "") ?? id}`, generatedAt: nowStamp() };
   logActivity(id, `Invoice ${ws.invoice.number} generated`);
   return ws.invoice;
+}
+
+export function setBillingPlan(id: number, plan: string): void {
+  const ws = getWorkspace(id);
+  if (ws.invoice || ws.stages?.some(s => s.invoice)) return; // already billed: the plan is fixed
+  const stages = BILLING_PLANS[plan];
+  if (!stages) return;
+  ws.stages = stages.map(s => ({ ...s, invoice: null }));
+  logActivity(id, `Progress billing set up: ${plan}`);
+}
+
+/** Raises the invoice for one stage (numbered INV-10542-1, -2, …). */
+export function invoiceStage(id: number, index: number): JobInvoice | null {
+  const ws = getWorkspace(id);
+  const job = ALL_JOBS.find(j => j.id === id);
+  const stage = ws.stages?.[index];
+  if (!stage || stage.invoice) return stage?.invoice ?? null;
+  stage.invoice = { number: `INV-${job?.jobId.replace(/^\D+-/, "") ?? id}-${index + 1}`, generatedAt: nowStamp() };
+  logActivity(id, `Invoice ${stage.invoice.number} generated (${stage.label}, ${stage.pct}%)`);
+  return stage.invoice;
 }
 
 export function setJobChecklist(id: number, checklist: boolean[]): void {

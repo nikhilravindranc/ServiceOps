@@ -3,7 +3,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import Switch from "@mui/material/Switch";
 import { UploadSimple, DownloadSimple, ArrowsClockwise, Trash } from "@phosphor-icons/react";
 import { parseCsv, downloadCsv } from "@/lib/csv";
-import { slugify, addCustomer, addAsset, CUSTOMERS, ASSETS, PARTS, SERVICE_ZONES, JOBS_TODAY_TS, DAY_MS, customerByName, type CustomerType, type ServicePlan, type ServiceZone, type AssetCategory } from "@/lib/serviceData";
+import { geocodeQuery, customerAddress } from "@/lib/geocodeClient";
+import { slugify, addCustomer, addAsset, CUSTOMERS, ASSETS, PARTS, SERVICE_ZONES, JOBS_TODAY_TS, DAY_MS, customerByName, type Customer, type CustomerType, type ServicePlan, type ServiceZone, type AssetCategory } from "@/lib/serviceData";
 
 const TYPES: CustomerType[] = ["Industrial", "Commercial", "Healthcare", "Hospitality", "Retail", "Residential", "Education", "Public sector"];
 const PLANS: ServicePlan[] = ["Gold AMC", "Silver AMC", "Pay per visit"];
@@ -75,15 +76,17 @@ export default function DataPanel({ notify }: { notify: (msg: string, href?: str
   const runImport = () => {
     setBusy(true);
     let n = 0;
+    const imported: Customer[] = [];
     for (const r of rows) {
       if (kind === "customers") {
-        addCustomer({
+        const created = addCustomer({
           name: r.name, type: TYPES.includes(r.type as CustomerType) ? (r.type as CustomerType) : "Commercial",
           plan: PLANS.includes(r.plan as ServicePlan) ? (r.plan as ServicePlan) : "Pay per visit",
           street: r.street ?? "", city: r.city ?? "", state: r.state ?? "", zip: r.zip ?? "", phone: r.phone ?? "", email: r.email ?? "",
           contactName: r["contact name"] ?? "", contactTitle: "", contactEmail: r["contact email"] ?? "", contactPhone: r["contact phone"] ?? "",
           zone: (SERVICE_ZONES as readonly string[]).includes(r.zone) ? (r.zone as ServiceZone) : "Central",
         });
+        imported.push(created);
       } else if (kind === "assets") {
         addAsset({
           customer: customerByName(r.customer)!.name, name: r.name, category: r.category as AssetCategory, manufacturer: r.manufacturer ?? "", model: r.model ?? "",
@@ -95,10 +98,26 @@ export default function DataPanel({ notify }: { notify: (msg: string, href?: str
       n++;
     }
     notify(`Imported ${n} ${SPEC[kind].label.toLowerCase()}. They are saved with your workspace.`);
+    if (imported.length) void geocodeCustomers(imported, false);
     reset(); setBusy(false);
   };
 
   const importable = rows.length > 0 && problems.length === 0;
+
+  // ── Geocoding: real map positions for customer addresses
+  const [geoRun, setGeoRun] = useState<{ done: number; total: number; ok: number; failed: number; running: boolean } | null>(null);
+  const missing = CUSTOMERS.filter(c => c.lat == null || c.lng == null);
+  async function geocodeCustomers(list: Customer[], showProgress = true) {
+    const todo = list.filter(c => customerAddress(c).trim().length >= 5);
+    let ok = 0, failed = list.length - todo.length;
+    if (showProgress) setGeoRun({ done: failed, total: list.length, ok, failed, running: true });
+    for (const c of todo) {
+      const p = await geocodeQuery(customerAddress(c));
+      if (p) { c.lat = p.lat; c.lng = p.lng; ok++; } else failed++;
+      if (showProgress) setGeoRun({ done: ok + failed, total: list.length, ok, failed, running: true });
+    }
+    if (showProgress) { setGeoRun({ done: list.length, total: list.length, ok, failed, running: false }); notify(`Geocoded ${ok} of ${list.length} addresses${failed ? `, ${failed} could not be found` : ""}`, undefined, ok ? "success" : "info"); }
+  }
 
   // ── Workspace data
   const resetWorkspace = async (mode: "sample" | "empty") => {
@@ -116,7 +135,8 @@ export default function DataPanel({ notify }: { notify: (msg: string, href?: str
   const [slug, setSlug] = useState("");
   const [win, setWin] = useState("120");
   const [geo, setGeo] = useState({ lat: "", lng: "", radius: "200" });
-  useEffect(() => { fetch("/api/org").then(r => r.json()).then(o => { setOrg(o); setSlug(o.slug ?? ""); setWin(String(o.arrivalWindowMins ?? 120)); setGeo({ lat: o.geoLat != null ? String(o.geoLat) : "", lng: o.geoLng != null ? String(o.geoLng) : "", radius: String(o.geoRadiusM ?? 200) }); }).catch(() => {}); }, []);
+  const [fenceMode, setFenceMode] = useState<"flag" | "block">("flag");
+  useEffect(() => { fetch("/api/org").then(r => r.json()).then(o => { setOrg(o); setFenceMode(o.geofenceMode === "block" ? "block" : "flag"); setSlug(o.slug ?? ""); setWin(String(o.arrivalWindowMins ?? 120)); setGeo({ lat: o.geoLat != null ? String(o.geoLat) : "", lng: o.geoLng != null ? String(o.geoLng) : "", radius: String(o.geoRadiusM ?? 200) }); }).catch(() => {}); }, []);
   const saveOrg = async (patch: object) => {
     const res = await fetch("/api/org", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
     const data = await res.json().catch(() => ({}));
@@ -154,7 +174,7 @@ export default function DataPanel({ notify }: { notify: (msg: string, href?: str
         </div>
       </Card>
 
-      <Card title="Time clock work area" hint="Optional. Clock-ins and clock-outs from outside this circle are flagged for a manager. People can still clock in.">
+      <Card title="Time clock work area" hint={fenceMode === "block" ? "Optional. Clock-ins and clock-outs from outside this circle are refused with a message." : "Optional. Clock-ins and clock-outs from outside this circle are flagged for a manager. People can still clock in."}>
         <div className="flex flex-wrap items-center gap-2">
           <input aria-label="Latitude" className={`${inputCls} w-[130px]`} placeholder="Latitude" value={geo.lat} onChange={e => setGeo({ ...geo, lat: e.target.value })} />
           <input aria-label="Longitude" className={`${inputCls} w-[130px]`} placeholder="Longitude" value={geo.lng} onChange={e => setGeo({ ...geo, lng: e.target.value })} />
@@ -163,6 +183,26 @@ export default function DataPanel({ notify }: { notify: (msg: string, href?: str
           <button type="button" className={primary} onClick={() => saveGeo()}>Save</button>
           <button type="button" className={pill} onClick={() => saveGeo(true)}>Turn off</button>
         </div>
+        <div className="flex flex-wrap items-center gap-2 mt-3">
+          <label htmlFor="fence-mode" className="text-body">When outside the work area</label>
+          <select id="fence-mode" className={inputCls} value={fenceMode} onChange={e => { const v = e.target.value as "flag" | "block"; setFenceMode(v); saveOrg({ geofenceMode: v }); }}>
+            <option value="flag">Flag only</option>
+            <option value="block">Block the clock-in or clock-out</option>
+          </select>
+          <span className="text-caption text-[var(--text-muted)]">Applies when a work area is saved. With Block, people must share their location to clock in or out.</span>
+        </div>
+      </Card>
+
+      <Card title="Customer map positions" hint="Looks up real coordinates for customer addresses (OpenStreetMap, about one address per second, each address is looked up once). Dispatch map uses them instead of approximate positions.">
+        <div className="flex flex-wrap items-center gap-3">
+          <button type="button" className={primary} disabled={geoRun?.running || missing.length === 0} onClick={() => geocodeCustomers(missing)}>Geocode addresses{missing.length ? ` (${missing.length})` : ""}</button>
+          <span className="text-caption text-[var(--text-muted)]" role="status">
+            {geoRun
+              ? <>{geoRun.running ? `Working… ${geoRun.done} of ${geoRun.total}. ` : "Done. "}{geoRun.ok} succeeded, {geoRun.failed} failed{geoRun.failed ? " (shown as approximate on the map)" : ""}</>
+              : missing.length === 0 ? "Every customer has a map position." : `${CUSTOMERS.length - missing.length} of ${CUSTOMERS.length} customers have a real position.`}
+          </span>
+        </div>
+        {geoRun?.running && <div className="mt-2 h-1.5 rounded bg-[var(--serviceops-tint)] overflow-hidden" aria-hidden="true"><div className="h-full bg-[var(--serviceops-primary)]" style={{ width: `${(geoRun.done / Math.max(geoRun.total, 1)) * 100}%` }} /></div>}
       </Card>
 
       <Card title="Import from CSV" hint="Bring customers, assets and parts from a spreadsheet. Import customers before their assets.">

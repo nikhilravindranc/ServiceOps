@@ -10,6 +10,7 @@ datasource db {
 }
 
 model Organization {
+  workspaceEntities WorkspaceEntity[]
   id             String   @id @default(cuid())
   name           String
   industry       String?
@@ -32,6 +33,7 @@ model Organization {
   geoLat         Float?   // optional work-area centre for the time clock
   geoLng         Float?
   geoRadiusM     Int?
+  geofenceMode   String   @default("flag") // flag | block: what happens to a clock-in/out outside the work area
   arrivalWindowMins Int   @default(120)  // length of the arrival window promised to customers
   createdAt      DateTime @default(now())
 
@@ -104,7 +106,10 @@ model Request {
   email        String?
   phone        String?
   source       String   @default("Phone") // Phone | Email | Web form | Online booking | Customer portal | Technician
-  serviceType  String   @default("HVAC")
+  serviceType  String   @default("HVAC")      // the trade: HVAC, Electrical, ...
+  workType     String   @default("Service")   // Installation | Service | Maintenance | Repair | Inspection
+  details      String?                        // JSON of the fields that belong to the work type
+  preferredDate String?                       // yyyy-mm-dd
   priority     String   @default("Medium")
   title        String
   description  String?
@@ -175,6 +180,20 @@ model WorkspaceSnapshot {
   json      String
   version   Int      @default(1)
   updatedAt DateTime @updatedAt
+}
+
+// One row per operational record (customer, work order, job, ...), so two people editing different records never overwrite each other.
+// `kind` is the collection ("workOrders"), `key` the record's id, `version` counts saves of that record. kind "__order" holds a collection's key order.
+model WorkspaceEntity {
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id])
+  kind      String
+  key       String
+  json      String
+  version   Int      @default(1)
+  updatedAt DateTime @updatedAt
+
+  @@id([orgId, kind, key])
 }
 
 // A link sent to a customer: approve an estimate with a signature, or pay an invoice.
@@ -267,4 +286,13 @@ model TimeEntry {
 
   @@index([orgId, clockIn])
   @@index([userId, clockOut])
+}
+
+// Cache of address lookups (OpenStreetMap Nominatim) so the same address is never looked up twice.
+model GeoCache {
+  id        String   @id @default(cuid())
+  query     String   @unique
+  lat       Float
+  lng       Float
+  createdAt DateTime @default(now())
 }

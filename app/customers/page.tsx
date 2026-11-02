@@ -1,4 +1,5 @@
 "use client";
+import { geocodeQuery, customerAddress } from "@/lib/geocodeClient";
 import { useOpenOnNew } from "@/lib/useOpenOnNew";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -121,6 +122,8 @@ export default function CustomersPage() {
     const c = addCustomer(form);
     closeAdd(); setVersion(v => v + 1);
     notify(`${c.name} added`, `/customers/${c.id}`);
+    // Look up real map coordinates in the background; the map falls back to an approximate spot if this fails.
+    geocodeQuery(customerAddress(c)).then(p => { if (p) { c.lat = p.lat; c.lng = p.lng; } });
   };
   const MI = { fontSize: "0.84rem" };
 

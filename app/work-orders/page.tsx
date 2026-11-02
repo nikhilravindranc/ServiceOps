@@ -17,7 +17,7 @@ import {
 import { SERVICE_TYPE_ORDER, TECHNICIANS } from "@/lib/jobsData";
 import { matchesAdvanced, matchesQuery } from "@/lib/filtering";
 import {
-  WORK_ORDERS, WO_STATUS_ORDER, CUSTOMERS, DAY_MS, JOBS_TODAY_TS, fmtDate, fmtDay, fmtTime, relDay, logWO,
+  WORK_ORDERS, WO_STATUS_ORDER, CUSTOMERS, DAY_MS, JOBS_TODAY_TS, fmtDate, fmtDay, fmtTime, relDay, logWO, woWorkType,
   type WorkOrder, type WOStatus,
 } from "@/lib/serviceData";
 
@@ -116,7 +116,7 @@ export default function WorkOrdersPage() {
       ),
     },
     { key: "customer", header: "Customer", cell: r => <Stack top={r.wo.customer} bottom={CUSTOMERS.find(c => c.id === r.wo.customerId)?.location} />, sortValue: r => r.wo.customer },
-    { key: "type", header: "Service type", cell: r => <ServiceTypeCell type={r.wo.serviceType} />, hideBelow: "wide" },
+    { key: "type", header: "Work type", cell: r => <Stack top={woWorkType(r.wo)} bottom={r.wo.serviceType} />, sortValue: r => woWorkType(r.wo), hideBelow: "wide" },
     { key: "priority", header: "Priority", cell: r => <PriorityTag priority={r.wo.priority} />, sortValue: r => ["High", "Medium", "Low"].indexOf(r.wo.priority) },
     { key: "status", header: "Status", cell: r => <WOStatusPill wo={r.wo} />, sortValue: r => WO_STATUS_ORDER.indexOf(r.status) },
     { key: "created", header: "Created", hideBelow: "wide", cell: r => <Stack top={fmtDay(r.wo.requestedAt)} bottom={relDay(r.wo.requestedAt)} />, sortValue: r => r.wo.requestedAt },

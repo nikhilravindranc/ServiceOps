@@ -4,7 +4,7 @@ import { Clock, SignIn, SignOut, DownloadSimple, WarningCircle } from "@phosphor
 import { PageShell, PageHeader, KpiRow, KpiTile, ListCard, DataTable, Pill, Stack, useToast, type Column } from "@/components/ui/ServiceOpsUI";
 
 type Entry = { id: string; userId: string; userName: string; clockIn: string; clockOut: string | null; note: string | null; outsideIn: boolean; outsideOut: boolean };
-type State = { entries: Entry[]; open: Entry | null; manager: boolean; geofence: { lat: number; lng: number; radiusM: number } | null };
+type State = { entries: Entry[]; open: Entry | null; manager: boolean; geofence: { lat: number; lng: number; radiusM: number; mode?: "flag" | "block" } | null };
 
 const hours = (e: Entry) => ((e.clockOut ? new Date(e.clockOut).getTime() : Date.now()) - new Date(e.clockIn).getTime()) / 3_600_000;
 const hm = (h: number) => `${Math.floor(h)}h ${String(Math.round((h % 1) * 60)).padStart(2, "0")}m`;
@@ -28,13 +28,14 @@ export default function TimesheetsPage() {
     navigator.geolocation.getCurrentPosition(p => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }), () => resolve(null), { timeout: 8000 });
   });
 
+  const [blockMsg, setBlockMsg] = useState("");
   const punch = async (action: "in" | "out") => {
-    setBusy(true);
+    setBusy(true); setBlockMsg("");
     const pos = await position();
     const res = await fetch("/api/time", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, ...(pos ?? {}) }) });
     const d = await res.json().catch(() => ({}));
     setBusy(false);
-    if (!res.ok) { notify(d.error ?? "Could not record the time", undefined, "info"); return; }
+    if (!res.ok) { if (d.blocked) setBlockMsg(d.error); notify(d.error ?? "Could not record the time", undefined, "info"); return; }
     notify(d.outside ? `Clocked ${action}, but outside the work area. A manager will see a flag.` : `Clocked ${action}`, undefined, d.outside ? "info" : "success");
     load();
   };
@@ -73,12 +74,13 @@ export default function TimesheetsPage() {
           </div>
           <label className="flex items-center gap-2 text-[13px] text-[var(--text-body)]">
             <input type="checkbox" checked={share} onChange={e => setShare(e.target.checked)} />
-            Share my location when I clock in or out{state?.geofence ? " (checked against the work area)" : ""}
+            Share my location when I clock in or out{state?.geofence ? (state.geofence.mode === "block" ? " (required: you cannot clock in or out outside the work area)" : " (checked against the work area)") : ""}
           </label>
           {state?.open
             ? <button type="button" disabled={busy} onClick={() => punch("out")} className="inline-flex items-center gap-1.5 h-10 px-5 rounded-[10px] text-[14px] font-bold text-white bg-slate-800 disabled:opacity-60"><SignOut size={16} />Clock out</button>
             : <button type="button" disabled={busy} onClick={() => punch("in")} className="inline-flex items-center gap-1.5 h-10 px-5 rounded-[10px] text-[14px] font-bold text-[#3B1F00] bg-[var(--serviceops-primary)] disabled:opacity-60"><SignIn size={16} />Clock in</button>}
         </div>
+        {blockMsg && <p role="alert" className="m-0 mx-4 mb-4 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-[13px] text-red-700">{blockMsg}</p>}
       </ListCard>
 
       <KpiRow cols="xl:grid-cols-3">

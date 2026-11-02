@@ -584,3 +584,8 @@ html.dark .MuiTextField-root textarea                         { color: #D4D4D8 !
   html[data-layout="compact"] main td, html[data-layout="compact"] main th { padding-top: 8px !important; padding-bottom: 8px !important; }
   html[data-layout="compact"] main td + td, html[data-layout="compact"] main th + th { border-left: 1px solid var(--border-soft); }
 }
+
+/* Wordmark: the dark artwork is swapped for a light copy in dark mode. */
+.logo-img .logo-light { display: none !important; }
+html.dark .logo-img .logo-dark { display: none !important; }
+html.dark .logo-img .logo-light { display: block !important; }

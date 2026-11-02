@@ -1,6 +1,7 @@
 import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
 import { authConfig } from "@/auth.config";
+import { canOpen } from "@/lib/access";
 
 const { auth } = NextAuth(authConfig);
 
@@ -27,9 +28,13 @@ export default auth(req => {
   if (!user.onboarded && user.role === "Administrator" && pathname !== "/onboarding" && !pathname.startsWith("/api/")) {
     return NextResponse.redirect(new URL("/onboarding", req.url));
   }
+  // Screens a role may not open send the person home with a notice.
+  if (!pathname.startsWith("/api/") && !isPublicPage(pathname) && !canOpen(user.role, pathname)) {
+    return NextResponse.redirect(new URL("/?denied=1", req.url));
+  }
   return NextResponse.next();
 });
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon\\.ico|logo\\.png|.*\\.svg|.*\\.png).*)"],
+  matcher: ["/((?!_next/static|_next/image|api/demo/|favicon\\.ico|logo\\.png|.*\\.svg|.*\\.png).*)"],
 };

@@ -1,4 +1,5 @@
 "use client";
+import Logo from "@/components/ui/Logo";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
@@ -87,7 +88,7 @@ export default function LoginPage() {
         <div className="px-10 py-7">
           {/* Logo */}
           <div className="flex justify-center mb-5">
-            <img src="/logo.png" alt="ServiceOps" style={{ height: "28px", width: "auto" }} />
+            <Logo style={{ height: "28px", width: "auto" }} />
           </div>
 
           {/* Heading */}

@@ -6,8 +6,9 @@
  *
  * Like `jobsData`, everything is session-scoped and in memory: no backend.
  */
+import { type WorkType } from "@/lib/workTypes";
 import {
-  ALL_JOBS, CUSTOMER_DIRECTORY, CUSTOMER_LOCATIONS, JOBS_TODAY, JOB_EXTRAS, PRODUCT_MODELS, TECHNICIANS,
+  ALL_JOBS, DOC_YEAR, CUSTOMER_DIRECTORY, CUSTOMER_LOCATIONS, JOBS_TODAY, JOB_EXTRAS, PRODUCT_MODELS, TECHNICIANS,
   TECHNICIAN_AVATARS, TECHNICIAN_PHONES, TECHNICIAN_TITLES, SLA_HOURS_BY_SERVICE, createJob, updateJob,
   getWorkspace, logActivity, technicianEmail,
   type JobRecord, type JobPriority, type ServiceType, type JobStatus,
@@ -22,7 +23,7 @@ const TODAY = JOBS_TODAY.getTime();
 /** The dataset's "today" (shared with the Jobs list date presets). */
 export const JOBS_TODAY_TS = TODAY;
 
-/** "Sep 24, 2024" */
+/** "Sep 24, 2026" */
 export const fmtDate = (t: number | Date) => {
   const d = new Date(t);
   return `${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
@@ -120,6 +121,9 @@ export interface Customer {
   paymentTerms: "Net 15" | "Net 30" | "Net 45";
   accountManager: string;
   accessNotes: string;
+  /** Real coordinates from address geocoding, when known. Without them the map uses an approximate position. */
+  lat?: number;
+  lng?: number;
 }
 
 export interface Contact {
@@ -503,6 +507,12 @@ export interface WorkOrder {
   customerId: string;
   contactId: string;
   serviceType: ServiceType;
+  /** Installation, Service, Maintenance, Repair or Inspection. Older records without one are inferred (see woWorkType). */
+  workType?: WorkType;
+  /** The type-specific answers captured on the request (equipment, fault, site readiness…). */
+  details?: Record<string, string>;
+  /** The request this work order was created from, when there is one. */
+  requestNumber?: string;
   priority: JobPriority;
   /** Only used while no job exists — once jobs are linked, status follows them. */
   baseStatus: WOStatus;
@@ -553,7 +563,7 @@ function buildWorkOrders(): WorkOrder[] {
     const requestedAt = parseStamp(job.createdAt) - (1 + (i % 3)) * 3600 * 1000;
     wos.push({
       id: i + 1,
-      number: `WO-2024-${String(410 + i).padStart(5, "0")}`,
+      number: `WO-${DOC_YEAR}-${String(410 + i).padStart(5, "0")}`,
       title: job.jobName.charAt(0).toUpperCase() + job.jobName.slice(1),
       customer: job.customer,
       customerId: slugify(job.customer),
@@ -602,7 +612,7 @@ function buildWorkOrders(): WorkOrder[] {
     const cust = customerById(custId);
     wos.push({
       id,
-      number: `WO-2024-${String(410 + ALL_JOBS.length + k).padStart(5, "0")}`,
+      number: `WO-${DOC_YEAR}-${String(410 + ALL_JOBS.length + k).padStart(5, "0")}`,
       title: p.title, customer: p.customer, customerId: custId, contactId: `${custId}-c1`,
       serviceType: p.serviceType, priority: p.priority, baseStatus: p.baseStatus, source: p.source,
       requestedAt: day(-p.daysAgo, 8 + (k % 6), (k * 13) % 60),
@@ -664,18 +674,20 @@ let woSeq = 0;
 export function addWorkOrder(input: {
   title: string; customer: string; contactId?: string; serviceType: ServiceType; priority: JobPriority;
   description: string; assetId: number | null; preferredDate: number | null; source: WOSource; needsEstimate: boolean;
+  workType?: WorkType; details?: Record<string, string>; requestNumber?: string;
 }): WorkOrder {
   const cust = customerByName(input.customer);
   const asset = input.assetId ? assetById(input.assetId) : undefined;
   const maxNo = WORK_ORDERS.reduce((m, w) => Math.max(m, Number(w.number.slice(-5))), 0);
   const wo: WorkOrder = {
     id: WORK_ORDERS.reduce((m, w) => Math.max(m, w.id), 0) + 1,
-    number: `WO-2024-${String(maxNo + 1).padStart(5, "0")}`,
+    number: `WO-${DOC_YEAR}-${String(maxNo + 1).padStart(5, "0")}`,
     title: input.title.trim(),
     customer: input.customer,
     customerId: slugify(input.customer),
     contactId: input.contactId || `${slugify(input.customer)}-c1`,
     serviceType: input.serviceType,
+    workType: input.workType, details: input.details, requestNumber: input.requestNumber,
     priority: input.priority,
     baseStatus: input.needsEstimate ? "Awaiting approval" : "Ready to schedule",
     source: input.source,
@@ -692,6 +704,17 @@ export function addWorkOrder(input: {
   };
   WORK_ORDERS.unshift(wo);
   return wo;
+}
+
+/** The work type of a work order; older sample records are inferred from their trade and wording. */
+export function woWorkType(wo: WorkOrder): WorkType {
+  if (wo.workType) return wo.workType;
+  const t = `${wo.title} ${wo.description}`.toLowerCase();
+  if (/install|new unit|commission/.test(t)) return "Installation";
+  if (/inspection|audit|safety check|thermal scan/.test(t)) return "Inspection";
+  if (wo.serviceType === "Preventive" || /preventive|scheduled|maintenance|amc|pm visit/.test(t)) return "Maintenance";
+  if (/service|clean|calibrat/.test(t) && !/tripping|leak|not cooling|fault|failure|reopening/.test(t)) return "Service";
+  return "Repair";
 }
 
 export function logWO(wo: WorkOrder, label: string) {
@@ -945,7 +968,7 @@ function buildEstimates(): Estimate[] {
     n += 1;
     out.push({
       id: `est-${wo.id}`,
-      number: `EST-2024-${String(n).padStart(4, "0")}`,
+      number: `EST-${DOC_YEAR}-${String(n).padStart(4, "0")}`,
       woId: wo.id,
       customer: wo.customer,
       issuedOn: wo.requestedAt + DAY_MS / 2,
@@ -956,7 +979,7 @@ function buildEstimates(): Estimate[] {
   }
   // One draft being prepared for a new request.
   const draftFor = WORK_ORDERS.find(w => w.title.startsWith("Emergency lighting"));
-  if (draftFor) out.push({ id: `est-${draftFor.id}`, number: `EST-2024-${String(++n).padStart(4, "0")}`, woId: draftFor.id, customer: draftFor.customer, issuedOn: TODAY, validUntil: TODAY + 30 * DAY_MS, status: "Draft", lines: [{ item: "Emergency Light Battery Pack", qty: 6, rate: 48 }, { item: "Labour — 2 hrs", qty: 1, rate: 900 }] });
+  if (draftFor) out.push({ id: `est-${draftFor.id}`, number: `EST-${DOC_YEAR}-${String(++n).padStart(4, "0")}`, woId: draftFor.id, customer: draftFor.customer, issuedOn: TODAY, validUntil: TODAY + 30 * DAY_MS, status: "Draft", lines: [{ item: "Emergency Light Battery Pack", qty: 6, rate: 48 }, { item: "Labour — 2 hrs", qty: 1, rate: 900 }] });
   return out;
 }
 
@@ -1021,6 +1044,11 @@ export function billingStateForJob(jobId?: number): BillingState {
   const job = jobId ? ALL_JOBS.find(j => j.id === jobId) : undefined;
   if (!job) return "Not billable";
   if (job.status === "Cancelled") return "Not billable";
+  const stages = getWorkspace(job.id).stages;
+  if (stages?.length) {
+    if (stages.some(s => !s.invoice)) return "Ready to invoice";
+    return stages.every(s => s.paidOn) ? "Paid" : "Invoiced";
+  }
   if (job.status !== "Completed") return "Not billable yet";
   if (getWorkspace(job.id).invoice) return getWorkspace(job.id).paidOn ? "Paid" : "Invoiced";
   return job.id % 3 === 0 ? "Ready to invoice" : "Paid";
@@ -1030,6 +1058,21 @@ export function billingStateForJob(jobId?: number): BillingState {
 export function allInvoices(): Invoice[] {
   const live: Invoice[] = [];
   for (const job of ALL_JOBS) {
+    const stages = getWorkspace(job.id).stages;
+    if (stages?.length) {
+      const cust = customerByName(job.customer);
+      stages.forEach((s, i) => {
+        if (!s.invoice) return;
+        const amount = stageAmount(job, i);
+        const issued = job.scheduledAt + DAY_MS / 2 + i * 7 * DAY_MS;
+        live.push({
+          number: s.invoice.number, customer: job.customer, jobRef: job.jobId, jobId: job.id, woNumber: workOrderForJob(job.id)?.number,
+          issuedOn: issued, dueOn: issued + TERMS_DAYS[cust?.paymentTerms ?? "Net 30"] * DAY_MS,
+          amount, paid: s.paidOn ? amount : 0, status: s.paidOn ? "Paid" : "Sent",
+        });
+      });
+      continue;
+    }
     const state = billingStateForJob(job.id);
     if (state !== "Invoiced" && state !== "Paid") continue;
     const cust = customerByName(job.customer);
@@ -1045,12 +1088,57 @@ export function allInvoices(): Invoice[] {
   return [...live, ...HISTORIC_INVOICES].sort((a, b) => b.issuedOn - a.issuedOn);
 }
 
+/** The amount of one stage of a progress-billed job; the last stage takes any rounding difference. */
+export function stageAmount(job: JobRecord, index: number): number {
+  const stages = getWorkspace(job.id).stages ?? [];
+  const total = jobCharges(job).total;
+  const before = stages.slice(0, index).reduce((s, st) => s + Math.round(total * st.pct / 100), 0);
+  return index === stages.length - 1 ? total - before : Math.round(total * (stages[index]?.pct ?? 0) / 100);
+}
+
+/** What must be true before an invoice can be raised or sent: nothing blank, nothing wrong. Returns the problems found. */
+export function invoiceReadiness(job: JobRecord, stageIndex?: number): { ok: boolean; problems: { text: string; fixHref?: string }[] } {
+  const problems: { text: string; fixHref?: string }[] = [];
+  const cust = customerByName(job.customer);
+  const fix = cust ? customerHref(cust.name) : undefined;
+  const stages = getWorkspace(job.id).stages;
+  const earlyStage = stageIndex !== undefined && !!stages && stageIndex < stages.length - 1;
+  if (job.status !== "Completed" && !earlyStage) problems.push({ text: `The job is ${job.status.toLowerCase()}; only completed jobs can be invoiced.`, fixHref: `/jobs/${job.id}` });
+  if (!cust) problems.push({ text: `${job.customer} is not in Customers, so there is no billing record.` });
+  else {
+    if (!/^\S+@\S+\.\S+$/.test(cust.email.trim())) problems.push({ text: "The customer has no valid billing email address.", fixHref: fix });
+    if (!cust.street.trim() || !cust.cityLine.trim()) problems.push({ text: "The customer has no billing address.", fixHref: fix });
+    if (!cust.paymentTerms) problems.push({ text: "The customer has no payment terms.", fixHref: fix });
+  }
+  if (!job.technician?.trim() || job.technician === "Unassigned") problems.push({ text: "No technician is recorded on the job.", fixHref: `/jobs/${job.id}` });
+  if (!workOrderForJob(job.id)) problems.push({ text: "The job is not linked to a work order.", fixHref: `/jobs/${job.id}` });
+  const c = jobCharges(job);
+  if (!(c.total > 0) || (c.labor <= 0 && c.parts.length === 0)) problems.push({ text: "There is nothing to bill: no labour or parts on the job.", fixHref: `/jobs/${job.id}` });
+  if (c.parts.some(p => !p.item.trim() || !(p.qty > 0) || !(p.rate >= 0))) problems.push({ text: "A billed part has no name, quantity or price.", fixHref: `/jobs/${job.id}` });
+  return { ok: problems.length === 0, problems };
+}
+
+/** Everything an invoice document shows, from saved records, so no field is left empty. */
+export function invoiceDocument(job: JobRecord) {
+  const cust = customerByName(job.customer);
+  const wo = workOrderForJob(job.id);
+  const issuedOn = job.scheduledAt + DAY_MS / 2;
+  const terms = cust?.paymentTerms ?? "Net 30";
+  return {
+    issuedOn, terms, dueOn: issuedOn + TERMS_DAYS[terms] * DAY_MS,
+    woNumber: wo?.number ?? "", requestNumber: wo?.requestNumber ?? "",
+    billTo: { name: job.customer, address: cust ? `${cust.street}, ${cust.cityLine}` : "", email: cust?.email ?? "", phone: cust?.phone ?? "" },
+  };
+}
+
 export const invoicesFor = (customer: string) => allInvoices().filter(i => i.customer === customer);
 export const outstanding = (i: Invoice) => i.amount - i.paid;
 
 export function recordPayment(inv: Invoice) {
   const h = HISTORIC_INVOICES.find(x => x.number === inv.number);
   if (h) { h.paid = h.amount; h.status = "Paid"; }
+  const stage = inv.jobId ? getWorkspace(inv.jobId).stages?.find(s => s.invoice?.number === inv.number) : undefined;
+  if (stage) { stage.paidOn = Date.now(); return; }
   if (inv.jobId) getWorkspace(inv.jobId).paidOn = Date.now();
 }
 
@@ -1237,7 +1325,7 @@ export const USERS: AppUser[] = [
   ...TECH_PROFILES.map((t, i): AppUser => ({
     id: `u-t${i}`, name: t.name, email: t.email, phone: t.phone, role: "Technician",
     team: TEAM_FOR[t.name] ?? "General service", territory: `${t.zone} zone`,
-    status: "Active", lastActive: t.onLeave ? "Sep 20, 2024" : i % 2 ? "Today, 08:12 AM" : "Today, 07:54 AM", avatar: t.avatar,
+    status: "Active", lastActive: t.onLeave ? fmtDate(TODAY - 4 * DAY_MS) : i % 2 ? "Today, 08:12 AM" : "Today, 07:54 AM", avatar: t.avatar,
   })),
   { id: "u-dc",    name: "Daniel Carter", email: "daniel.carter@serviceops.com", phone: "+1 732 555 0133", role: "Technician",          team: "HVAC & Mechanical", territory: "South zone",      status: "Invited", lastActive: "—",              avatar: "https://randomuser.me/api/portraits/men/11.jpg" },
 ];

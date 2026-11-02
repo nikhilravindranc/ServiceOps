@@ -18,7 +18,7 @@ import AppearancePanel from "@/components/settings/AppearancePanel";
 import { CertPanel, DeliveryLogPanel, AutomationsPanel } from "@/components/settings/OpsPanels";
 import { PermissionPanel, RolesPanel } from "@/components/settings/AccessPanels";
 import { SERVICE_TYPE_ORDER, STATUS_ORDER, STATUS_META, PRIORITY_META, SLA_HOURS_BY_SERVICE, type JobStatus } from "@/lib/jobsData";
-import { SERVICE_ZONES, TECH_PROFILES, CUSTOMERS, USERS, JOB_DURATION_HRS } from "@/lib/serviceData";
+import { SERVICE_ZONES, TECH_PROFILES, CUSTOMERS, USERS, JOB_DURATION_HRS, fmtDate } from "@/lib/serviceData";
 import { useTheme } from "@/components/ThemeContext";
 
 type Key = "general" | "hours" | "numbering" | "types" | "statuses" | "priorities" | "sla" | "zones" | "teams" | "notifications" | "templates" | "permission" | "data" | "certs" | "deliverylog" | "automations" | "appearance";
@@ -111,7 +111,7 @@ export default function ServiceSettings() {
           <Row label="Support email" hint="Shown on job cards and customer messages">{field({ defaultValue: "service@northeastfs.com" })}</Row>
           <Row label="Time zone"><Select size="small" fullWidth defaultValue="est" sx={FX}><MenuItem value="est">Eastern Time (UTC−05:00)</MenuItem><MenuItem value="cst">Central Time (UTC−06:00)</MenuItem></Select></Row>
           <Row label="Currency & tax" hint="Default tax applies to labour and parts"><div className="grid grid-cols-2 gap-3"><Select size="small" defaultValue="usd" sx={FX}><MenuItem value="usd">USD ($)</MenuItem><MenuItem value="cad">CAD ($)</MenuItem></Select>{field({ defaultValue: "18", label: "Tax %" })}</div></Row>
-          <Row label="Date format"><Select size="small" fullWidth defaultValue="mdy" sx={FX}><MenuItem value="mdy">Sep 24, 2024</MenuItem><MenuItem value="dmy">24 Sep 2024</MenuItem><MenuItem value="iso">2024-09-24</MenuItem></Select></Row>
+          <Row label="Date format"><Select size="small" fullWidth defaultValue="mdy" sx={FX}><MenuItem value="mdy">{fmtDate(Date.now())}</MenuItem><MenuItem value="dmy">{new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</MenuItem><MenuItem value="iso">{new Date().toISOString().slice(0, 10)}</MenuItem></Select></Row>
           <Row label="Distance units"><Select size="small" fullWidth defaultValue="mi" sx={FX}><MenuItem value="mi">Miles</MenuItem><MenuItem value="km">Kilometres</MenuItem></Select></Row>
         </Panel>
       );
@@ -139,7 +139,7 @@ export default function ServiceSettings() {
       case "numbering": return (
         <Panel title="Numbering" description="Prefixes and next numbers for records. Changes apply to new records only." action={saveBtn}>
           <MiniTable head={["Record", "Prefix", "Next number", "Preview"]} minWidth={560}>
-            {[["Work order", "WO-2024-", "00483"], ["Job", "JOB-", "10542"], ["Estimate", "EST-2024-", "0330"], ["Invoice", "INV-", "10542"], ["Asset", "AST-", "1051"], ["Part request", "PR-", "0500"]].map(([r, p, n]) => (
+            {[["Work order", `WO-${new Date().getFullYear()}-`, "00483"], ["Job", "JOB-", "10542"], ["Estimate", `EST-${new Date().getFullYear()}-`, "0330"], ["Invoice", "INV-", "10542"], ["Asset", "AST-", "1051"], ["Part request", "PR-", "0500"]].map(([r, p, n]) => (
               <tr key={r}>
                 <td className="px-4 text-table-cell text-[var(--text-primary)]">{r}</td>
                 <td className="px-4"><TextField size="small" defaultValue={p} sx={{ ...FX, width: 140 }} /></td>
